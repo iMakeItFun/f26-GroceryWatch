@@ -9,6 +9,7 @@ import {
   View,
 } from "react-native";
 import { ScreenHeader } from "../components/Chrome";
+import { requestDeviceCoordinates, showLocationPermissionDenied } from "../location";
 import { colors, layout } from "../theme";
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
@@ -57,11 +58,13 @@ export function MapScreen() {
   const [status, setStatus] = useState<"idle" | "loading" | "error">("idle");
   const [error, setError] = useState("");
   const [checked, setChecked] = useState(false);
+  const [searchSource, setSearchSource] = useState<"zip" | "location">("zip");
   const canSearch = /^\d{5}$/.test(zip.trim()) && status !== "loading";
   const mapped = stores.filter((store) => pinStyle(store, stores));
 
   async function onSearch() {
     if (!canSearch) return;
+    setSearchSource("zip");
     if (!API_URL) {
       setStatus("error");
       setError("API URL not set");
@@ -88,10 +91,68 @@ export function MapScreen() {
     }
   }
 
+  async function onUseLocation() {
+    if (status === "loading") return;
+    setSearchSource("location");
+    setChecked(false);
+    setStores([]);
+    setError("");
+    if (!API_URL) {
+      setStatus("error");
+      setError("API URL not set");
+      return;
+    }
+
+    setStatus("loading");
+    // Show the right error if finding stores fails after we get the location.
+    let locating = true;
+    try {
+      const location = await requestDeviceCoordinates();
+      if (!location.granted) {
+        setStatus("idle");
+        showLocationPermissionDenied(location.canAskAgain, setError);
+        return;
+      }
+
+      locating = false;
+      const params = new URLSearchParams({
+        latitude: String(location.coordinates.latitude),
+        longitude: String(location.coordinates.longitude),
+      });
+      const res = await fetch(`${API_URL}/stores?${params.toString()}`);
+      if (!res.ok) {
+        setStatus("error");
+        setError(await readError(res));
+        return;
+      }
+      setStores((await res.json()) as KrogerStore[]);
+      setChecked(true);
+      setStatus("idle");
+    } catch {
+      setStatus("error");
+      setError(locating
+        ? "Could not get your location. Check location services or search by ZIP."
+        : "Could not reach the store search API. Try again or search by ZIP.");
+    }
+  }
+
   return (
     <View style={styles.root}>
       <ScreenHeader title="Map" showActions={false} />
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+        <Pressable
+          accessibilityRole="button"
+          disabled={status === "loading"}
+          onPress={() => void onUseLocation()}
+          style={[styles.locationBtn, status === "loading" && styles.searchBtnDisabled]}
+        >
+          <Text style={styles.locationBtnText}>
+            {status === "loading" && searchSource === "location"
+              ? "Finding your location..."
+              : "Use my location"}
+          </Text>
+        </Pressable>
+        <Text style={styles.hint}>Or search by ZIP code.</Text>
         <View style={styles.searchBar}>
           <TextInput
             value={zip}
@@ -120,16 +181,18 @@ export function MapScreen() {
             <Text style={styles.hint}>Searching nearby Kroger stores...</Text>
           </View>
         )}
-        {status === "error" ? <Text style={styles.errorText}>{error}</Text> : null}
+        {error ? <Text style={styles.errorText}>{error}</Text> : null}
         {!checked && status !== "loading" && error === "" ? (
-          <Text style={styles.hint}>Enter a zip code to find nearby Kroger stores.</Text>
+          <Text style={styles.hint}>Use your location or enter a ZIP code to find nearby Kroger stores.</Text>
         ) : null}
 
         <View style={styles.map}>
           {mapped.length === 0 ? (
             <Text style={styles.mapEmpty}>
               {checked && stores.length === 0
-                ? "No Kroger stores found for that zip."
+                ? searchSource === "location"
+                  ? "No Kroger stores found near your location."
+                  : "No Kroger stores found for that zip."
                 : checked
                   ? "These stores did not include a map location."
                   : "Nearby Kroger stores"}
@@ -187,6 +250,15 @@ const styles = StyleSheet.create({
   },
   searchBtnDisabled: { opacity: 0.45 },
   searchBtnText: { color: colors.white, fontWeight: "700" },
+  locationBtn: {
+    borderWidth: 1,
+    borderColor: colors.green,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    alignItems: "center",
+  },
+  locationBtnText: { color: colors.greenDark, fontWeight: "700" },
   statusRow: { flexDirection: "row", alignItems: "center", gap: 8 },
   hint: { fontSize: 13, color: colors.muted },
   errorText: { color: colors.danger, fontSize: 14 },
