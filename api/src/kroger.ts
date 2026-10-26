@@ -127,10 +127,8 @@ function storeAddress(address: {
   return parts.join(", ");
 }
 
-export async function searchStores(zip: string): Promise<KrogerStore[]> {
-  const response = await krogerGet(
-    `/locations?filter.zipCode.near=${encodeURIComponent(zip)}&filter.limit=5`
-  );
+// Both search options should return the same store details.
+async function storesFromResponse(response: Response): Promise<KrogerStore[]> {
   if (!response.ok) throw new KrogerRequestError();
   const data = (await response.json()) as {
     data?: Array<{
@@ -161,6 +159,26 @@ export async function searchStores(zip: string): Promise<KrogerStore[]> {
     });
   }
   return stores;
+}
+
+export async function searchStores(zip: string): Promise<KrogerStore[]> {
+  const response = await krogerGet(
+    `/locations?filter.zipCode.near=${encodeURIComponent(zip)}&filter.limit=5`
+  );
+  return storesFromResponse(response);
+}
+
+export async function searchStoresByCoordinates(
+  latitude: number,
+  longitude: number
+): Promise<KrogerStore[]> {
+  const params = new URLSearchParams({
+    "filter.lat.near": String(latitude),
+    "filter.lon.near": String(longitude),
+    "filter.limit": "5",
+  });
+  const response = await krogerGet(`/locations?${params.toString()}`);
+  return storesFromResponse(response);
 }
 
 function moneyOrNull(value: unknown) {

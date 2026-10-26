@@ -6,6 +6,14 @@
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
+    "plugins": [
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Allow GroceryWatch to use your location to find nearby stores."
+        }
+      ]
+    ],
     "ios": {
       "supportsTablet": true
     },

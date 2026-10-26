@@ -7,13 +7,14 @@ import {
   KrogerRequestError,
   pricesForBarcodes,
   searchProducts,
+  searchStoresByCoordinates,
   searchStores,
 } from "./kroger";
 
 const PLACEHOLDER_USER_ID = "00000000-0000-0000-0000-000000000001";
 const MAX_PRICE = 99_999_999.99;
 
-const app = Fastify({ logger: true });
+export const app = Fastify({ logger: true });
 app.register(cors, { methods: ["GET", "HEAD", "POST", "DELETE"] });
 
 type ProductInput = {
@@ -174,8 +175,42 @@ function krogerError(err: unknown, reply: { code: (status: number) => { send: (b
 }
 
 app.get("/stores", async (req, reply) => {
-  const query = req.query as { zip?: unknown };
+  const query = req.query as {
+    zip?: unknown;
+    latitude?: unknown;
+    longitude?: unknown;
+  };
   const zip = typeof query.zip === "string" ? query.zip.trim() : "";
+  // Search by ZIP or coordinates, but don't mix the two.
+  const hasCoordinates = query.latitude !== undefined || query.longitude !== undefined;
+
+  if (hasCoordinates) {
+    const latitude =
+      typeof query.latitude === "string" && query.latitude.trim() !== ""
+        ? Number(query.latitude)
+        : Number.NaN;
+    const longitude =
+      typeof query.longitude === "string" && query.longitude.trim() !== ""
+        ? Number(query.longitude)
+        : Number.NaN;
+
+    if (query.zip !== undefined || !Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+      return reply.code(400).send({
+        error: "Provide either a 5-digit zip code or valid latitude and longitude.",
+      });
+    }
+    if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
+      return reply.code(400).send({ error: "Coordinates are out of range." });
+    }
+
+    try {
+      return await searchStoresByCoordinates(latitude, longitude);
+    } catch (err) {
+      app.log.error(err instanceof KrogerRequestError ? err.message : err);
+      return krogerError(err, reply);
+    }
+  }
+
   if (!/^\d{5}$/.test(zip)) {
     return reply.code(400).send({ error: "A 5-digit zip code is required." });
   }
@@ -318,5 +353,8 @@ app.delete("/products/:id", async (req, reply) => {
   }
 });
 
-const port = Number(process.env.PORT) || 3000;
-app.listen({ port, host: "0.0.0.0" });
+// Let tests load the routes without starting the server.
+if (require.main === module) {
+  const port = Number(process.env.PORT) || 3000;
+  app.listen({ port, host: "0.0.0.0" });
+}
