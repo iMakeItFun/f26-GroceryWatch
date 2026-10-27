@@ -11,6 +11,7 @@ import {
 } from "react-native";
 import { ScreenHeader } from "../components/Chrome";
 import { colors } from "../theme";
+import { calculateFinalPrice, calculateTax, ESTIMATED_TAX_RATE } from "../tax";
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -220,8 +221,8 @@ export function SearchScreen({ onOpenSettings }: Props) {
 
   function listPrice(quote: KrogerPrice | undefined) {
     if (!quote) return null;
-    if (quote.price !== null) return quote.price;
-    return quote.promoPrice;
+    if (quote.promoPrice !== null) return quote.promoPrice;
+    return quote.price;
   }
 
   async function onAdd(product: CatalogProduct) {
@@ -401,10 +402,21 @@ export function SearchScreen({ onOpenSettings }: Props) {
                   <Text style={styles.meta}>Barcode {product.barcode}</Text>
                 ) : null}
                 {quote?.price !== null && quote?.price !== undefined ? (
-                  <Text style={styles.price}>{formatMoney(quote.price)}</Text>
+                  <Text style={styles.price}>Shelf price {formatMoney(quote.price)}</Text>
                 ) : null}
                 {quote?.promoPrice !== null && quote?.promoPrice !== undefined ? (
-                  <Text style={styles.promo}>Promo {formatMoney(quote.promoPrice)}</Text>
+                  <Text style={styles.promo}>Promo shelf price {formatMoney(quote.promoPrice)}</Text>
+                ) : null}
+                {price !== null ? (
+                  <>
+                    <Text style={styles.meta}>
+                      Estimated tax {formatMoney(calculateTax(price))} (
+                      {(ESTIMATED_TAX_RATE * 100).toFixed(0)}%)
+                    </Text>
+                    <Text style={styles.price}>
+                      Estimated total {formatMoney(calculateFinalPrice(price))}
+                    </Text>
+                  </>
                 ) : null}
               </View>
               {price !== null && selectedStoreId !== null ? (

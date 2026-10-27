@@ -10,6 +10,11 @@ import {
 } from "react-native";
 import { ScreenHeader } from "../components/Chrome";
 import { colors, layout } from "../theme";
+import {
+  calculateFinalPrice,
+  calculateShoppingListTotal,
+  ESTIMATED_TAX_RATE,
+} from "../tax";
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
@@ -205,7 +210,7 @@ export function AccountScreen() {
                 accessibilityLabel="Product name"
               />
 
-              <Text style={styles.label}>Current price</Text>
+              <Text style={styles.label}>Shelf price (before tax)</Text>
               <TextInput
                 value={price}
                 onChangeText={setPrice}
@@ -251,6 +256,11 @@ export function AccountScreen() {
 
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>Your list</Text>
+              {products.length > 0 && (
+                <Text style={styles.muted}>
+                  Estimated total includes {(ESTIMATED_TAX_RATE * 100).toFixed(0)}% estimated tax.
+                </Text>
+              )}
               {products.length === 0 ? (
                 <Text style={styles.muted}>Nothing on your list yet.</Text>
               ) : (
@@ -258,12 +268,19 @@ export function AccountScreen() {
                   <View key={product.id} style={styles.card}>
                     <View style={styles.cardTop}>
                       <Text style={styles.cardName}>{product.name}</Text>
-                      <Text style={styles.cardPrice}>{formatMoney(product.price)}</Text>
+                      <Text style={styles.cardPrice}>
+                        {formatMoney(
+                          calculateFinalPrice(
+                            product.price * (product.quantity ?? 1)
+                          )
+                        )}
+                      </Text>
                     </View>
+                    <Text style={styles.muted}>
+                      Shelf price {formatMoney(product.price)}
+                      {product.quantity !== null ? ` · Qty ${product.quantity}` : ""}
+                    </Text>
                     <Text style={styles.muted}>{product.location}</Text>
-                    {product.quantity !== null && (
-                      <Text style={styles.muted}>Qty {product.quantity}</Text>
-                    )}
                     <Pressable
                       accessibilityRole="button"
                       accessibilityLabel={`Remove ${product.name}`}
@@ -277,6 +294,14 @@ export function AccountScreen() {
                     </Pressable>
                   </View>
                 ))
+              )}
+              {products.length > 0 && (
+                <View style={styles.cardTop}>
+                  <Text style={styles.cardName}>Estimated list total</Text>
+                  <Text style={styles.cardPrice}>
+                    {formatMoney(calculateShoppingListTotal(products))}
+                  </Text>
+                </View>
               )}
             </View>
           </>
