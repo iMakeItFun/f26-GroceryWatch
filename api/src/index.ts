@@ -23,6 +23,7 @@ import {
   padBarcode,
 } from "./kroger";
 import { trackKrogerPrice } from "./priceHistory";
+import { parseReviewInput } from "./reviews";
 import {
   DEMO_STORE_ID,
   demoEnabled,
@@ -725,6 +726,67 @@ app.delete("/products/:id", async (req, reply) => {
   } catch (err) {
     app.log.error(err);
     return reply.code(500).send({ error: "Could not remove product." });
+  }
+});
+
+app.post("/reviews", async (req, reply) => {
+  const session = await getSessionUserId(req as any, reply);
+  if (!session) return;
+
+  const parsed = parseReviewInput(req.body);
+  if (typeof parsed === "string") {
+    return reply.code(400).send({ error: parsed });
+  }
+
+  try {
+    const result = await pool.query<{
+      id: string;
+      created_at: Date;
+    }>(
+      `INSERT INTO public.store_reviews (
+          user_id,
+          store_provider,
+          external_store_id,
+          store_name,
+          store_address,
+          rating,
+          comment
+      )
+      VALUES ($1, 'kroger', $2, $3, $4, $5, $6)
+      RETURNING id, created_at`,
+      [
+        session.userId,
+        parsed.locationId,
+        parsed.storeName,
+        parsed.storeAddress,
+        parsed.rating,
+        parsed.comment,
+      ]
+    );
+    const saved = result.rows[0];
+    if (!saved) {
+      return reply.code(500).send({ error: "Could not save review." });
+    }
+
+    return reply.code(201).send({
+      id: saved.id,
+      storeName: parsed.storeName,
+      rating: parsed.rating,
+      createdAt: saved.created_at,
+      message: "Review submitted. Thanks for sharing your shopping experience.",
+    });
+  } catch (err) {
+    app.log.error(err);
+    const code =
+      typeof err === "object" && err !== null && "code" in err
+        ? (err as { code?: unknown }).code
+        : undefined;
+    if (code === "42P01" || code === "42703") {
+      return reply.code(503).send({
+        error: "Review database setup is incomplete. Apply the latest Supabase migration with `npx supabase db push`.",
+      });
+    }
+    return reply.code(500).send({ error: "Could not save review." });
   }
 });
 

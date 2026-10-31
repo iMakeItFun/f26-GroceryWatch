@@ -158,7 +158,7 @@ postgresql://postgres.abcdefghijklmnopqrst:yourpassword@aws-0-us-east-1.pooler.s
 
 ## Account creation and login
 
-The mobile app now supports creating an account and logging in before you add items to your list. The API issues a session token for each user and validates it on every profile and product request.
+The mobile app supports creating an account and logging in to manage your list and submit store reviews. The API issues a session token for each user and validates it on profile, product, and review requests.
 
 Before testing signup or login against an existing Supabase project, apply the account schema migration from the repository root:
 
@@ -166,7 +166,7 @@ Before testing signup or login against an existing Supabase project, apply the a
 npx supabase db push
 ```
 
-This applies `supabase/migrations/20261016100000_auth_accounts.sql`, which adds the account fields and session table. If the migration has not been applied, the API returns a database setup error instead of creating an account.
+This applies pending schema migrations, including the account fields and session table and the `store_reviews` table. If a required migration has not been applied, the API returns a database setup error.
 
 1. Start the API and mobile app as described above.
 2. Open the Account tab in the app.
@@ -279,4 +279,3 @@ Sam - Sam Garden - sgard009@odu.edu
 Stone Casey - Stone Casey - scase008@odu.edu
 iMakeItFun - Jordan Dossou - jdoss007@odu.edu
 JoshuaHarris1989 - Joshua Harris - Jharr075@ODU.edu OR joshuaharris1989@gmail.com
-
