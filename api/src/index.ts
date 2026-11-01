@@ -649,7 +649,7 @@ app.get("/products", async (req, reply) => {
           barcode,
           external_store_id,
           created_at
-      FROM public.spotted_products
+      FROM public.shopping_list_items
       WHERE user_id = $1
       ORDER BY created_at DESC`,
       [session.userId]
@@ -672,7 +672,7 @@ app.post("/products", async (req, reply) => {
 
   try {
     const result = await pool.query<ProductRow>(
-      `INSERT INTO public.spotted_products (
+      `INSERT INTO public.shopping_list_items (
           user_id,
           name,
           price,
@@ -715,7 +715,7 @@ app.delete("/products/:id", async (req, reply) => {
 
   try {
     const result = await pool.query(
-      "delete from spotted_products where id = $1 and user_id = $2 returning id",
+      "delete from public.shopping_list_items where id = $1 and user_id = $2 returning id",
       [id, session.userId]
     );
     if (result.rowCount === 0) {
