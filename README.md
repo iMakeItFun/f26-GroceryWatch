@@ -10,9 +10,9 @@ A mobile app for comparing grocery prices across nearby stores. Built for CS 411
 | Mobile app          | React Native with Expo (TypeScript)       |
 | Backend API         | Node.js with Fastify (TypeScript)         |
 | Database            | PostgreSQL hosted on Supabase             |
-| Scheduled ingestion | Node script run as a Railway cron service |
+| Scheduled ingestion | `npm run ingest` (run locally when needed) |
 | Product data        | Open Food Facts, Kroger API               |
-| Hosting             | Railway                                   |
+| API demos           | Localhost (`npm run dev` in `api/`)       |
 
 
 ## Repository Structure
@@ -168,6 +168,19 @@ A correct Session pooler string has the project ref attached to the username and
 postgresql://postgres.abcdefghijklmnopqrst:yourpassword@aws-0-us-east-1.pooler.supabase.com:5432/postgres
 ```
 
+## Public API
+
+GroceryWatch exposes a versioned public pricing API under `/v1`. For class demos, run the API locally and call `http://localhost:3000`. Requests (except health) require an `X-API-Key` header. Set `PUBLIC_API_KEYS=dev-public-key` in `api/.env` (see `api/.env.example`).
+
+Full endpoint documentation: [docs/public-api.md](docs/public-api.md).
+
+Quick check (API must be running with `npm run dev`):
+
+```bash
+curl http://localhost:3000/v1/health
+curl -H "X-API-Key: dev-public-key" "http://localhost:3000/v1/stores?zip=23529"
+```
+
 ## Account creation and login
 
 The mobile app supports creating an account and logging in to manage your list and submit store reviews. The API issues a session token for each user and validates it on profile, product, and review requests.
@@ -227,14 +240,14 @@ Run these from the `api/` folder:
 ## Troubleshooting
 
 `/health` **returns** `connect ETIMEDOUT` **with an IPv6 address (like** `2600:...`**)**
-You are using the direct connection string. Switch to the **Session pooler** string. The direct connection is IPv6-only on the free plan and most networks, including Railway, can't reach it.
+You are using the direct connection string. Switch to the **Session pooler** string. The direct connection is IPv6-only on the free plan and many networks can't reach it.
 
 `password authentication failed for user "postgres"`
 
 - Use the **database password** set when the project was created, not your Supabase account login.
 - Make sure the `[ ]` brackets around the password placeholder were removed.
 - Check that the username includes the project ref (`postgres.abcd...`), not just `postgres`.
-- If unsure of the password, ask the team rather than resetting it, since a reset breaks everyone's `.env` and the Railway deployment.
+- If unsure of the password, ask the team rather than resetting it, since a reset breaks everyone's local `.env` setup.
 
 `/health` **returns an error after editing** `.env`
 `npm run dev` does not always reload `.env`. Stop it with Ctrl+C and start it again.
@@ -270,20 +283,20 @@ Files starting with a dot are hidden in File Explorer and Finder. Open the folde
 
 
 
-## Deployment
+## Running locally for demos
 
-The API and ingestion job are deployed on Railway and redeploy automatically when changes merge into `main`.
+From `api/`:
 
+```bash
+npm run dev
+```
 
-| Service | Root directory | Start command    | Schedule   |
-| ------- | -------------- | ---------------- | ---------- |
-| API     | `/api`         | `npm start`      | Always on  |
-| Ingest  | `/api`         | `npm run ingest` | Cron (UTC) |
+Confirm:
 
+- http://localhost:3000/health
+- http://localhost:3000/v1/health
 
-Both services need `DATABASE_URL` set to the Session pooler string in their Railway variables. The API service also needs `KROGER_CLIENT_ID` and `KROGER_CLIENT_SECRET` so store search and prices work in the deployed app.
-
-Deployed health check: `https://<railway-domain>/health`
+Optional one-off ingestion: `npm run build` then `npm run ingest`.
 
 ## Data Sources and Attribution
 
