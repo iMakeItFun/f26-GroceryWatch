@@ -33,6 +33,7 @@ import {
   demoPrices,
   demoHistory,
 } from "./seededFallback";
+import { publicApiRoutes } from "./publicApi";
 
 
 const PLACEHOLDER_USER_ID = "00000000-0000-0000-0000-000000000001";
@@ -41,6 +42,7 @@ const DEMO_ZIP = "00000";
 
 const app = Fastify({ logger: true });
 app.register(cors, { methods: ["GET", "HEAD", "POST", "DELETE"] });
+app.register(publicApiRoutes, { prefix: "/v1" });
 
 function sendAuthDatabaseError(reply: FastifyReply, err: unknown, message: string) {
   app.log.error(err);
