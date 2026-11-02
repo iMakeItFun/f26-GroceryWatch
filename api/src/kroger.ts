@@ -1,4 +1,4 @@
-import { execFileSync } from "child_process";
+import { userEnv } from "./user-env";
 
 const TOKEN_URL = "https://api-ce.kroger.com/v1/connect/oauth2/token";
 const API_BASE = "https://api-ce.kroger.com/v1";
@@ -11,8 +11,12 @@ export class KrogerNotConfiguredError extends Error {
 }
 
 export class KrogerRequestError extends Error {
-  constructor(message = "Kroger request failed.") {
+  constructor(
+    message = "Kroger request failed.",
+    public readonly status?: number
+  ) {
     super(message);
+    this.name = "KrogerRequestError";
   }
 }
 
@@ -39,6 +43,16 @@ export type KrogerCatalogItem = {
   promoPrice: number | null;
 };
 
+export type KrogerStoreDetails = {
+  name: string;
+  address: {
+    street: string;
+    city: string;
+    state: string;
+    zip: string;
+  }
+};
+
 type TokenCache = {
   token: string;
   expiresAt: number;
@@ -46,38 +60,9 @@ type TokenCache = {
 
 let cachedToken: TokenCache | null = null;
 
-function windowsUserEnv(name: string) {
-  if (process.platform !== "win32") return "";
-  try {
-    const output = execFileSync(
-      "powershell.exe",
-      [
-        "-NoProfile",
-        "-NonInteractive",
-        "-Command",
-        `[Environment]::GetEnvironmentVariable(${JSON.stringify(name)}, 'User')`,
-      ],
-      { windowsHide: true, timeout: 10000 }
-    );
-    const text =
-      output.length >= 2 && output[0] === 0xff && output[1] === 0xfe
-        ? output.subarray(2).toString("utf16le")
-        : output.toString("utf8");
-    return text.replace(/^\uFEFF/, "").trim();
-  } catch {
-    return "";
-  }
-}
-
-function envValue(name: string) {
-  const fromUser = windowsUserEnv(name);
-  if (fromUser.length > 0) return fromUser;
-  return process.env[name]?.trim() ?? "";
-}
-
 function credentials() {
-  const id = envValue("KROGER_CLIENT_ID");
-  const secret = envValue("KROGER_CLIENT_SECRET");
+  const id = userEnv("KROGER_CLIENT_ID");
+  const secret = userEnv("KROGER_CLIENT_SECRET");
   if (!id || !secret) return null;
   return { id, secret };
 }
@@ -112,7 +97,12 @@ async function accessToken() {
   if (response.status === 401) {
     throw new KrogerRequestError("Kroger rejected the client credentials.");
   }
-  if (!response.ok) throw new KrogerRequestError();
+  if (!response.ok) {
+    throw new KrogerRequestError(
+      `Kroger authentication failed (HTTP ${response.status}).`,
+      response.status
+    );
+  }
 
   const data = (await response.json()) as {
     access_token?: unknown;
@@ -160,7 +150,13 @@ export async function searchStores(zip: string): Promise<KrogerStore[]> {
   const response = await krogerGet(
     `/locations?filter.zipCode.near=${encodeURIComponent(zip)}&filter.limit=5`
   );
-  if (!response.ok) throw new KrogerRequestError();
+  if (!response.ok) {
+    throw new KrogerRequestError(
+      `Kroger store search failed (HTTP ${response.status}).`,
+      response.status
+    );
+  }
+
   const data = (await response.json()) as {
     data?: Array<{
       locationId?: unknown;
@@ -214,7 +210,13 @@ export async function searchProducts(term: string, locationId: string) {
     "filter.limit": "20",
   });
   const response = await krogerGet(`/products?${params.toString()}`);
-  if (!response.ok) throw new KrogerRequestError();
+
+  if (!response.ok) {
+    throw new KrogerRequestError(
+      `Kroger product search failed (HTTP ${response.status}).`,
+      response.status
+    );
+  }
 
   const data = (await response.json()) as {
     data?: Array<{
@@ -250,7 +252,17 @@ async function priceForBarcode(locationId: string, barcode: string): Promise<Kro
   const response = await krogerGet(
     `/products/${encodeURIComponent(upc)}?filter.locationId=${encodeURIComponent(locationId)}`
   );
-  if (!response.ok) return { barcode, price: null, promoPrice: null };
+
+  if (response.status == 404) {
+    return {barcode, price: null, promoPrice: null}
+  }
+  
+  if (!response.ok) {
+    throw new KrogerRequestError(
+      `Kroger product lookup failed (HTTP ${response.status}).`,
+      response.status
+    );
+  }
 
   const body = (await response.json()) as {
     data?: {
@@ -275,4 +287,41 @@ export async function pricesForBarcodes(locationId: string, barcodes: string[]) 
     prices.push(...found);
   }
   return prices;
+}
+
+export async function getKrogerStoreDetails(locationId: string): Promise<KrogerStoreDetails | null> {
+  const response = await krogerGet(`/locations/${encodeURIComponent(locationId)}`);
+
+  if (response.status == 404) return null;
+  if (!response.ok) {
+    throw new KrogerRequestError("Unable to retrieve Kroger store details.");
+  }
+
+  const payload = (await response.json()) as {
+    data?: {
+      name?: unknown;
+      address?: {
+        addressLine1?: unknown;
+        city?: unknown;
+        state?: unknown;
+        zipCode?: unknown;
+      }
+    }
+  }
+
+  const data = payload.data;
+  if (!data) return null;
+
+  const name = textOrNull(data.name);
+  if (!name) return null;
+
+  return {
+    name,
+    address: {
+      street: textOrNull(data.address?.addressLine1) ?? "",
+      city: textOrNull(data.address?.city) ?? "",
+      state: textOrNull(data.address?.state) ?? "",
+      zip: textOrNull(data.address?.zipCode) ?? "",
+    },
+  }
 }

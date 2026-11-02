@@ -79,16 +79,25 @@ cp .env.example .env
 Copy-Item .env.example .env
 ```
 
-Open `api/.env` and set `DATABASE_URL` to the Supabase connection string (see [Getting the Database URL](#getting-the-database-url) below). Fill in the Kroger credentials from the team. The file should contain these four lines, with no quotes and no spaces around `=`:
+`api/.env` only holds non-secret settings. The example file sets `PORT=3000`.
 
-```
-DATABASE_URL=postgresql://postgres.<project-ref>:<database-password>@<pooler-host>:5432/postgres
-PORT=3000
-KROGER_CLIENT_ID=<kroger-client-id>
-KROGER_CLIENT_SECRET=<kroger-client-secret>
+Set these three values in the user environment on your computer, not in the file. `DATABASE_URL` is the full Supabase Session pooler string, with the database password already included (see [Getting the Database URL](#getting-the-database-url) below).
+
+```powershell
+# Windows PowerShell
+[Environment]::SetEnvironmentVariable('DATABASE_URL', 'postgresql://postgres.<project-ref>:<database-password>@<pooler-host>:5432/postgres', 'User')
+[Environment]::SetEnvironmentVariable('KROGER_CLIENT_ID', '<kroger-client-id>', 'User')
+[Environment]::SetEnvironmentVariable('KROGER_CLIENT_SECRET', '<kroger-client-secret>', 'User')
 ```
 
-Leave the Kroger values empty only if you are not using Map or in-store search. Those routes then return `Kroger is not configured.`
+```bash
+# macOS, in ~/.zshenv
+export DATABASE_URL='postgresql://postgres.<project-ref>:<database-password>@<pooler-host>:5432/postgres'
+export KROGER_CLIENT_ID='<kroger-client-id>'
+export KROGER_CLIENT_SECRET='<kroger-client-secret>'
+```
+
+Open a new terminal after setting them. Leave the Kroger values unset only if you are not using Map or in-store search. Those routes then return `Kroger is not configured.`
 
 Start the API:
 
@@ -159,7 +168,25 @@ A correct Session pooler string has the project ref attached to the username and
 postgresql://postgres.abcdefghijklmnopqrst:yourpassword@aws-0-us-east-1.pooler.supabase.com:5432/postgres
 ```
 
+## Account creation and login
 
+The mobile app supports creating an account and logging in to manage your list and submit store reviews. The API issues a session token for each user and validates it on profile, product, and review requests.
+
+Before testing signup or login against an existing Supabase project, apply the account schema migration from the repository root:
+
+```bash
+npx supabase db push
+```
+
+This applies pending schema migrations, including the account fields and session table and the `store_reviews` table. If a required migration has not been applied, the API returns a database setup error.
+
+1. Start the API and mobile app as described above.
+2. Open the Account tab in the app.
+3. Choose **Create account** and enter a display name, email, and password.
+4. After signup, the app stores the session locally and loads your saved list automatically.
+5. Use **Log in** later with the same email and password to restore your session.
+
+The server uses the existing Supabase `profiles` table plus a lightweight `user_sessions` table for token-based authentication.
 
 ## Database Migrations
 

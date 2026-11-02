@@ -1,6 +1,8 @@
 import { Pool } from "pg";
+import { userEnv } from "./user-env";
 
+const connectionString = userEnv("DATABASE_URL");
 export const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
+  connectionString: connectionString || undefined,
+  ssl: connectionString ? { rejectUnauthorized: false } : undefined,
 });
