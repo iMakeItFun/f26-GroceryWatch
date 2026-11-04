@@ -13,6 +13,7 @@ import { colors, layout } from "../theme";
 import {
   calculateFinalPrice,
   calculateShoppingListTotal,
+  calculateTax,
   ESTIMATED_TAX_RATE,
 } from "../tax";
 
@@ -264,40 +265,44 @@ export function AccountScreen() {
               {products.length === 0 ? (
                 <Text style={styles.muted}>Nothing on your list yet.</Text>
               ) : (
-                products.map((product) => (
-                  <View key={product.id} style={styles.card}>
-                    <View style={styles.cardTop}>
-                      <Text style={styles.cardName}>{product.name}</Text>
-                      <Text style={styles.cardPrice}>
-                        {formatMoney(
-                          calculateFinalPrice(
-                            product.price * (product.quantity ?? 1)
-                          )
-                        )}
+                products.map((product) => {
+                  const quantity = product.quantity ?? 1;
+                  const subtotal = product.price * quantity;
+                  return (
+                    <View key={product.id} style={styles.card}>
+                      <View style={styles.cardTop}>
+                        <Text style={styles.cardName}>{product.name}</Text>
+                        <Text style={styles.cardPrice}>
+                          {formatMoney(calculateFinalPrice(subtotal))}
+                        </Text>
+                      </View>
+                      <Text style={styles.muted}>
+                        Shelf price {formatMoney(product.price)}
+                        {product.quantity !== null ? ` · Qty ${product.quantity}` : ""}
                       </Text>
+                      <Text style={styles.muted}>
+                        Estimated tax ({(ESTIMATED_TAX_RATE * 100).toFixed(0)}%):{" "}
+                        {formatMoney(calculateTax(subtotal))}
+                      </Text>
+                      <Text style={styles.muted}>{product.location}</Text>
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel={`Remove ${product.name}`}
+                        disabled={removingId === product.id}
+                        style={[styles.removeBtn, removingId === product.id && styles.primaryBtnDisabled]}
+                        onPress={() => void onRemove(product.id)}
+                      >
+                        <Text style={styles.removeBtnText}>
+                          {removingId === product.id ? "Removing..." : "Remove"}
+                        </Text>
+                      </Pressable>
                     </View>
-                    <Text style={styles.muted}>
-                      Shelf price {formatMoney(product.price)}
-                      {product.quantity !== null ? ` · Qty ${product.quantity}` : ""}
-                    </Text>
-                    <Text style={styles.muted}>{product.location}</Text>
-                    <Pressable
-                      accessibilityRole="button"
-                      accessibilityLabel={`Remove ${product.name}`}
-                      disabled={removingId === product.id}
-                      style={[styles.removeBtn, removingId === product.id && styles.primaryBtnDisabled]}
-                      onPress={() => void onRemove(product.id)}
-                    >
-                      <Text style={styles.removeBtnText}>
-                        {removingId === product.id ? "Removing..." : "Remove"}
-                      </Text>
-                    </Pressable>
-                  </View>
-                ))
+                  );
+                })
               )}
               {products.length > 0 && (
                 <View style={styles.cardTop}>
-                  <Text style={styles.cardName}>Estimated list total</Text>
+                  <Text style={styles.cardName}>Estimated list total (incl. tax)</Text>
                   <Text style={styles.cardPrice}>
                     {formatMoney(calculateShoppingListTotal(products))}
                   </Text>

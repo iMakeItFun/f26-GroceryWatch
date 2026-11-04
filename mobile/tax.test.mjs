@@ -25,6 +25,7 @@ test("adds tax consistently to each shopping-list line and total", () => {
     { price: 1.25, quantity: null },
   ];
 
+  assert.equal(calculateTax(items[0].price * items[0].quantity), 0.3);
   assert.equal(calculateFinalPrice(items[0].price * items[0].quantity), 5.3);
   assert.equal(calculateFinalPrice(items[1].price), 1.33);
   assert.equal(calculateShoppingListTotal(items), 6.63);
