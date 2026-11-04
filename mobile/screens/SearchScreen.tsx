@@ -12,8 +12,14 @@ import {
 import { ScreenHeader } from "../components/Chrome";
 import { requestDeviceCoordinates, showLocationPermissionDenied } from "../location";
 import { colors } from "../theme";
+import {
+  PriceHistoryModal,
+  type PriceHistoryResponse,
+} from "../components/PriceHistoryModal"
+
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
+const DEMO_STORE_ID = "GW-DEMO-001";
 
 type CatalogProduct = {
   barcode: string | null;
@@ -38,6 +44,54 @@ type Props = {
   onOpenSettings: () => void;
 };
 
+
+function getSessionToken(): string | null {
+  const storage = globalThis as typeof globalThis & {
+    "grocerywatch-session"?: string;
+    localStorage?: {
+      getItem: (key: string) => string | null;
+    };
+  };
+
+  let raw: string | null | undefined;
+
+  try {
+    raw =
+      storage["grocerywatch-session"] ??
+      storage.localStorage?.getItem("grocerywatch-session");
+  } catch {
+    raw = storage["grocerywatch-session"];
+  }
+
+  if (!raw) return null;
+
+  try {
+    const session = JSON.parse(raw) as {
+      token?: unknown;
+      expires_at?: unknown;
+    };
+
+    if (
+      typeof session.token !== "string" ||
+      !session.token
+    ) {
+      return null;
+    }
+
+    if (
+      typeof session.expires_at === "string" &&
+      new Date(session.expires_at).getTime() <= Date.now()
+    ) {
+      return null;
+    }
+
+    return session.token;
+  } catch {
+    return null;
+  }
+}
+
+
 async function readError(res: Response) {
   try {
     const data = (await res.json()) as { error?: unknown };
@@ -45,6 +99,26 @@ async function readError(res: Response) {
   } catch {
   }
   return "Search failed.";
+}
+
+async function getFallbackStoreId(
+  response: Response
+): Promise<string | null> {
+  if (response.status !== 503) {
+    return null;
+  }
+
+  try {
+    const body = (await response.clone().json()) as {
+      demoLocationId?: unknown;
+    };
+
+    return typeof body.demoLocationId === "string"
+      ? body.demoLocationId
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 export function SearchScreen({ onOpenSettings }: Props) {
@@ -66,10 +140,20 @@ export function SearchScreen({ onOpenSettings }: Props) {
   const [addedKeys, setAddedKeys] = useState<Record<string, true>>({});
   const [addingKey, setAddingKey] = useState<string | null>(null);
   const [addError, setAddError] = useState("");
+  const [activeHistory, setActiveHistory] = useState<{
+    productName: string;
+  } | null>(null);
+  const [historyData, setHistoryData] = useState<PriceHistoryResponse | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState("");
 
   const canSearch = query.trim().length > 0 && status !== "loading";
 
   async function onSearch() {
+    setActiveHistory(null);
+    setHistoryData(null);
+    setHistoryError("");
+
     const q = query.trim();
     if (!q || status === "loading") return;
 
@@ -114,10 +198,20 @@ export function SearchScreen({ onOpenSettings }: Props) {
     const params = new URLSearchParams({ q: query.trim(), locationId });
     const res = await fetch(`${API_URL}/catalog/store-search?${params.toString()}`);
     if (!res.ok) {
+      const fallbackId = await getFallbackStoreId(res);
+
+      if (fallbackId && fallbackId !== locationId) {
+        setSelectedStoreId(fallbackId);
+        setPriceError("");
+
+        await searchKrogerStore(fallbackId);
+        return;
+      }
+
       setPriceStatus("error");
       setPriceError(await readError(res));
       return;
-    }
+}
     const rows = (await res.json()) as Array<
       CatalogProduct & { price: number | null; promoPrice: number | null }
     >;
@@ -144,6 +238,10 @@ export function SearchScreen({ onOpenSettings }: Props) {
   }
 
   async function onFindStores() {
+    setActiveHistory(null);
+    setHistoryData(null);
+    setHistoryError("");
+
     if (!/^\d{5}$/.test(zip.trim()) || !API_URL || storeStatus === "loading") return;
     setStoreSearchSource("zip");
     setStoreStatus("loading");
@@ -224,6 +322,10 @@ export function SearchScreen({ onOpenSettings }: Props) {
   }
 
   async function onSelectStore(store: KrogerStore) {
+    setActiveHistory(null);
+    setHistoryData(null);
+    setHistoryError("");
+
     if (!API_URL || priceStatus === "loading") return;
     const barcodes = results
       .map((product) => product.barcode)
@@ -234,9 +336,14 @@ export function SearchScreen({ onOpenSettings }: Props) {
     setPriceStatus("loading");
     setPriceError("");
     try {
+      if (store.locationId === DEMO_STORE_ID) {
+          await searchKrogerStore(store.locationId);
+          return;
+      }
+
       if (barcodes.length === 0) {
-        await searchKrogerStore(store.locationId);
-        return;
+          await searchKrogerStore(store.locationId);
+          return;
       }
       const params = new URLSearchParams({
         locationId: store.locationId,
@@ -244,6 +351,18 @@ export function SearchScreen({ onOpenSettings }: Props) {
       });
       const res = await fetch(`${API_URL}/catalog/prices?${params.toString()}`);
       if (!res.ok) {
+        const fallbackId = await getFallbackStoreId(res);
+
+        if (fallbackId) {
+          setSelectedStoreId(fallbackId);
+          setPrices({});
+          setStoreMatches([]);
+          setPriceError("");
+
+          await searchKrogerStore(fallbackId);
+          return;
+        }
+
         setPriceStatus("error");
         setPriceError(await readError(res));
         return;
@@ -274,35 +393,147 @@ export function SearchScreen({ onOpenSettings }: Props) {
 
   function listPrice(quote: KrogerPrice | undefined) {
     if (!quote) return null;
-    if (quote.price !== null) return quote.price;
-    return quote.promoPrice;
+
+    if (quote.promoPrice !== null && ( quote.price === null || quote.promoPrice < quote.price)) {
+      return quote.promoPrice
+    }
+
+    return quote.price
   }
 
+  
   async function onAdd(product: CatalogProduct) {
     const key = productKey(product);
-    const quote = product.barcode ? prices[product.barcode] : undefined;
+
+    const quote = product.barcode
+      ? prices[product.barcode]
+      : undefined;
+
     const price = listPrice(quote);
-    const store = stores.find((item) => item.locationId === selectedStoreId);
-    if (!API_URL || price === null || !store || addingKey || addedKeys[key]) return;
+
+    if (
+      !API_URL ||
+      price === null ||
+      !selectedStoreId ||
+      addingKey ||
+      addedKeys[key]
+    ) {
+      return;
+    }
+
+    const token = getSessionToken();
+
+    if (!token) {
+      setAddError(
+        "You must sign in to add products to your list."
+      );
+      return;
+    }
+
+    const store = stores.find(
+      (item) => item.locationId === selectedStoreId
+    );
+
+    const location =
+      selectedStoreId === DEMO_STORE_ID
+        ? "GroceryWatch DEMO Store"
+        : store
+          ? store.address
+            ? `${store.name}, ${store.address}`
+            : store.name
+          : null;
+
+    if (!location) {
+      setAddError("Please select a valid store.");
+      return;
+    }
 
     setAddingKey(key);
     setAddError("");
-    const location = store.address ? `${store.name}, ${store.address}` : store.name;
+
     try {
-      const res = await fetch(`${API_URL}/products`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: product.name, price, location }),
-      });
-      if (!res.ok) {
-        setAddError(await readError(res));
+      const response = await fetch(
+        `${API_URL}/products`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            name: product.name,
+            price,
+            location,
+            barcode: product.barcode,
+            externalStoreId: selectedStoreId,
+          }),
+        }
+      );
+
+      if (response.status === 401) {
+        setAddError(
+          "Your session has expired. Please sign in again."
+        );
         return;
       }
-      setAddedKeys((current) => ({ ...current, [key]: true }));
+
+      if (!response.ok) {
+        setAddError(await readError(response));
+        return;
+      }
+
+      setAddedKeys((current) => ({
+        ...current,
+        [key]: true,
+      }));
     } catch {
-      setAddError("API unreachable");
+      setAddError("Could not connect to the server.");
     } finally {
       setAddingKey(null);
+    }
+  }
+
+
+  async function onHistory(product: CatalogProduct) {
+    if(!API_URL || !selectedStoreId || !product.barcode || historyLoading) { return; }
+
+    const locationId = selectedStoreId;
+
+    setActiveHistory({
+      productName: product.name,
+    });
+
+    setHistoryData(null);
+    setHistoryError("");
+    setHistoryLoading(true);
+
+    try {
+      const response = await fetch(
+        `${API_URL}/catalog/price-history`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            locationId,
+            barcode: product.barcode,
+            name: product.name,
+          })
+        }
+      );
+
+      if (!response.ok) {
+        setHistoryError(await readError(response));
+        return;
+      }
+
+      const data = (await response.json()) as PriceHistoryResponse;
+      setHistoryData(data);
+    } catch {
+      setHistoryError("Could not connect to the price history service");
+    } finally {
+      setHistoryLoading(false);
     }
   }
 
@@ -317,13 +548,15 @@ export function SearchScreen({ onOpenSettings }: Props) {
   }
 
   const visibleResults =
-    storeMatches.length > 0
-      ? storeMatches
-      : selectedStoreId !== null && priceStatus === "loading"
-        ? []
-        : storePricesReady
-          ? results.filter(isAtSelectedStore)
-          : results;
+    selectedStoreId === DEMO_STORE_ID
+        ? storeMatches
+        : storeMatches.length > 0
+            ? storeMatches
+            : selectedStoreId !== null && priceStatus === "loading"
+                ? []
+                : storePricesReady
+                    ? results.filter(isAtSelectedStore)
+                    : results;
 
   return (
     <View style={styles.root}>
@@ -443,6 +676,13 @@ export function SearchScreen({ onOpenSettings }: Props) {
               </View>
             )}
             {priceError ? <Text style={styles.errorText}>{priceError}</Text> : null}
+            {selectedStoreId === DEMO_STORE_ID ? (
+              <Text style={styles.hint}>
+                DEMO MODE: These products, prices, and historical
+                observations are simulated and do not represent
+                live Kroger pricing.
+              </Text>
+            ) : null}
           </View>
         )}
 
@@ -481,6 +721,24 @@ export function SearchScreen({ onOpenSettings }: Props) {
                   <Text style={styles.promo}>Promo {formatMoney(quote.promoPrice)}</Text>
                 ) : null}
               </View>
+
+              {price !== null && selectedStoreId !== null && product.barcode ? (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`View price history for ${product.name}`}
+                  disabled={historyLoading}
+                  onPress={() => void onHistory(product)}
+                  style={[
+                    styles.addBtn,
+                    historyLoading && styles.searchBtnDisabled,
+                  ]}
+                >
+                  <Text style={styles.addBtnText}>
+                    History
+                  </Text>
+                </Pressable>
+              ) : null}
+
               {price !== null && selectedStoreId !== null ? (
                 <Pressable
                   accessibilityRole="button"
@@ -498,6 +756,17 @@ export function SearchScreen({ onOpenSettings }: Props) {
           );
         })}
       </ScrollView>
+
+      <PriceHistoryModal
+        visible={activeHistory !== null}
+        productName={activeHistory?.productName ?? ""}
+        data={historyData}
+        loading={historyLoading}
+        error={historyError}
+        onClose={() => {
+          setActiveHistory(null);
+        }}
+      />
     </View>
   );
 }
