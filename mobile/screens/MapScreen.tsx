@@ -21,6 +21,35 @@ type KrogerStore = {
   longitude: number | null;
 };
 
+function getSessionToken(): string | null {
+  const storage = globalThis as typeof globalThis & {
+    "grocerywatch-session"?: string;
+    localStorage?: { getItem: (key: string) => string | null };
+  };
+
+  try {
+    const raw =
+      storage["grocerywatch-session"] ??
+      storage.localStorage?.getItem("grocerywatch-session");
+    if (!raw) return null;
+
+    const session = JSON.parse(raw) as {
+      token?: unknown;
+      expires_at?: unknown;
+    };
+    if (typeof session.token !== "string" || !session.token) return null;
+    if (
+      typeof session.expires_at === "string" &&
+      new Date(session.expires_at).getTime() <= Date.now()
+    ) {
+      return null;
+    }
+    return session.token;
+  } catch {
+    return null;
+  }
+}
+
 function pinStyle(store: KrogerStore, stores: KrogerStore[]) {
   const points = stores.filter(
     (item) => item.latitude !== null && item.longitude !== null
@@ -42,13 +71,13 @@ function pinStyle(store: KrogerStore, stores: KrogerStore[]) {
   } as const;
 }
 
-async function readError(res: Response) {
+async function readError(res: Response, fallback = "Store search failed.") {
   try {
     const data = (await res.json()) as { error?: unknown };
     if (typeof data.error === "string") return data.error;
   } catch {
   }
-  return "Store search failed.";
+  return fallback;
 }
 
 export function MapScreen() {
@@ -57,8 +86,73 @@ export function MapScreen() {
   const [status, setStatus] = useState<"idle" | "loading" | "error">("idle");
   const [error, setError] = useState("");
   const [checked, setChecked] = useState(false);
+  const [reviewStoreId, setReviewStoreId] = useState<string | null>(null);
+  const [reviewRating, setReviewRating] = useState(5);
+  const [reviewComment, setReviewComment] = useState("");
+  const [reviewStatus, setReviewStatus] = useState<"idle" | "saving" | "submitted" | "error">("idle");
+  const [reviewMessage, setReviewMessage] = useState("");
   const canSearch = /^\d{5}$/.test(zip.trim()) && status !== "loading";
   const mapped = stores.filter((store) => pinStyle(store, stores));
+
+  function openReview(store: KrogerStore) {
+    setReviewStoreId(store.locationId);
+    setReviewRating(5);
+    setReviewComment("");
+    setReviewStatus("idle");
+    setReviewMessage("");
+  }
+
+  async function onSubmitReview(store: KrogerStore) {
+    if (reviewStatus === "saving" || !reviewComment.trim()) return;
+    if (!API_URL) {
+      setReviewStatus("error");
+      setReviewMessage("API URL not set.");
+      return;
+    }
+
+    const token = getSessionToken();
+    if (!token) {
+      setReviewStatus("error");
+      setReviewMessage("Please log in from the Account tab to submit a review.");
+      return;
+    }
+
+    setReviewStatus("saving");
+    setReviewMessage("");
+    try {
+      const res = await fetch(`${API_URL}/reviews`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          locationId: store.locationId,
+          storeName: store.name,
+          storeAddress: store.address,
+          rating: reviewRating,
+          comment: reviewComment.trim(),
+        }),
+      });
+      if (!res.ok) {
+        setReviewStatus("error");
+        setReviewMessage(await readError(res, "Review submission failed."));
+        return;
+      }
+
+      const response = (await res.json()) as { message?: unknown };
+      setReviewStatus("submitted");
+      setReviewMessage(
+        typeof response.message === "string"
+          ? response.message
+          : "Review submitted. Thanks for sharing your shopping experience."
+      );
+      setReviewComment("");
+    } catch {
+      setReviewStatus("error");
+      setReviewMessage("Could not reach the API. Please try again.");
+    }
+  }
 
   async function onSearch() {
     if (!canSearch) return;
@@ -156,6 +250,77 @@ export function MapScreen() {
             <View style={styles.storeBody}>
               <Text style={styles.storeName}>{store.name}</Text>
               {store.address ? <Text style={styles.storeMeta}>{store.address}</Text> : null}
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => openReview(store)}
+                style={styles.reviewToggle}
+              >
+                <Text style={styles.reviewToggleText}>Write a review</Text>
+              </Pressable>
+              {reviewStoreId === store.locationId ? (
+                <View style={styles.reviewForm}>
+                  <Text style={styles.reviewLabel}>Your rating</Text>
+                  <View style={styles.ratingRow}>
+                    {[1, 2, 3, 4, 5].map((rating) => (
+                      <Pressable
+                        key={rating}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Set rating to ${rating} ${rating === 1 ? "star" : "stars"}`}
+                        accessibilityState={{ selected: reviewRating === rating }}
+                        onPress={() => setReviewRating(rating)}
+                        style={[
+                          styles.ratingButton,
+                          reviewRating === rating && styles.ratingButtonSelected,
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.ratingButtonText,
+                            reviewRating === rating && styles.ratingButtonTextSelected,
+                          ]}
+                        >
+                          {rating}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                  <TextInput
+                    value={reviewComment}
+                    onChangeText={setReviewComment}
+                    placeholder="Share what your shopping experience was like"
+                    placeholderTextColor={colors.muted}
+                    style={styles.reviewInput}
+                    accessibilityLabel="Review"
+                    multiline
+                    maxLength={1000}
+                    editable={reviewStatus !== "saving" && reviewStatus !== "submitted"}
+                  />
+                  {reviewMessage ? (
+                    <Text
+                      accessibilityLiveRegion="polite"
+                      style={reviewStatus === "error" ? styles.errorText : styles.reviewSuccess}
+                    >
+                      {reviewMessage}
+                    </Text>
+                  ) : null}
+                  {reviewStatus !== "submitted" ? (
+                    <Pressable
+                      accessibilityRole="button"
+                      disabled={!reviewComment.trim() || reviewStatus === "saving"}
+                      onPress={() => void onSubmitReview(store)}
+                      style={[
+                        styles.reviewSubmit,
+                        (!reviewComment.trim() || reviewStatus === "saving") &&
+                          styles.searchBtnDisabled,
+                      ]}
+                    >
+                      <Text style={styles.searchBtnText}>
+                        {reviewStatus === "saving" ? "Submitting..." : "Submit review"}
+                      </Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+              ) : null}
             </View>
           </View>
         ))}
@@ -241,7 +406,43 @@ const styles = StyleSheet.create({
     color: colors.white,
     fontWeight: "700",
   },
-  storeBody: { flex: 1, gap: 2 },
+  storeBody: { flex: 1, gap: 6 },
   storeName: { fontSize: 16, fontWeight: "700", color: colors.text },
   storeMeta: { color: colors.muted, fontSize: 13 },
+  reviewToggle: { alignSelf: "flex-start", paddingVertical: 6 },
+  reviewToggleText: { color: colors.greenDark, fontSize: 14, fontWeight: "700" },
+  reviewForm: { gap: 8, paddingTop: 6 },
+  reviewLabel: { color: colors.text, fontSize: 13, fontWeight: "700" },
+  ratingRow: { flexDirection: "row", gap: 8 },
+  ratingButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  ratingButtonSelected: { backgroundColor: colors.green, borderColor: colors.green },
+  ratingButtonText: { color: colors.text, fontWeight: "700" },
+  ratingButtonTextSelected: { color: colors.white },
+  reviewInput: {
+    minHeight: 88,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: colors.text,
+    textAlignVertical: "top",
+  },
+  reviewSubmit: {
+    alignSelf: "flex-start",
+    backgroundColor: colors.green,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+  },
+  reviewSuccess: { color: colors.greenDark, fontSize: 13, fontWeight: "600" },
 });
