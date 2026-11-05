@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -16,6 +16,7 @@ import {
   calculateTax,
   ESTIMATED_TAX_RATE,
 } from "../tax";
+import {
   PriceHistoryModal,
   type PriceHistoryResponse,
 } from "../components/PriceHistoryModal";
@@ -577,7 +578,7 @@ export function AccountScreen() {
               <Text style={styles.sectionTitle}>Your list</Text>
               {products.length > 0 && (
                 <Text style={styles.muted}>
-                  Estimated total includes {(ESTIMATED_TAX_RATE * 100).toFixed(0)}% estimated tax.
+                  Estimated prices include {(ESTIMATED_TAX_RATE * 100).toFixed(0)}% tax.
                 </Text>
               )}
               {products.length === 0 ? (
@@ -603,51 +604,45 @@ export function AccountScreen() {
                         {formatMoney(calculateTax(subtotal))}
                       </Text>
                       <Text style={styles.muted}>{product.location}</Text>
-                products.map((product) => (
-                  <View key={product.id} style={styles.card}>
-                    <View style={styles.cardTop}>
-                      <Text style={styles.cardName}>{product.name}</Text>
-                      <Text style={styles.cardPrice}>{formatMoney(product.price)}</Text>
-                    </View>
-                    <Text style={styles.muted}>{product.location}</Text>
-                    {product.quantity !== null && (
-                      <Text style={styles.muted}>Qty {product.quantity}</Text>
-                    )}
-                    <View style={styles.cardActions}>
-                      <Pressable
-                        accessibilityRole="button"
-                        accessibilityLabel={`View price history for ${product.name}`}
-                        disabled={
-                          !product.barcode ||
-                          !product.external_store_id ||
-                          historyLoading
-                        }
-                        onPress={() => void onHistory(product)}
-                        style={[
-                          styles.actionBtn,
-                          styles.historyBtn,
-                          (!product.barcode ||
+                      <View style={styles.cardActions}>
+                        <Pressable
+                          accessibilityRole="button"
+                          accessibilityLabel={`View price history for ${product.name}`}
+                          disabled={
+                            !product.barcode ||
                             !product.external_store_id ||
-                            historyLoading) &&
-                            styles.primaryBtnDisabled,
-                        ]}
-                      >
-                        <Text style={styles.historyBtnText}>
-                          History
-                        </Text>
-                      </Pressable>
+                            historyLoading
+                          }
+                          onPress={() => void onHistory(product)}
+                          style={[
+                            styles.actionBtn,
+                            styles.historyBtn,
+                            (!product.barcode ||
+                              !product.external_store_id ||
+                              historyLoading) &&
+                              styles.primaryBtnDisabled,
+                          ]}
+                        >
+                          <Text style={styles.historyBtnText}>History</Text>
+                        </Pressable>
 
-                      <Pressable
-                        accessibilityRole="button"
-                        accessibilityLabel={`Remove ${product.name}`}
-                        disabled={removingId === product.id}
-                        style={[styles.removeBtn, removingId === product.id && styles.primaryBtnDisabled]}
-                        onPress={() => void onRemove(product.id)}
-                      >
-                        <Text style={styles.removeBtnText}>
-                          {removingId === product.id ? "Removing..." : "Remove"}
-                        </Text>
-                      </Pressable>
+                        <Pressable
+                          accessibilityRole="button"
+                          accessibilityLabel={`Remove ${product.name}`}
+                          disabled={removingId === product.id}
+                          onPress={() => void onRemove(product.id)}
+                          style={[
+                            styles.actionBtn,
+                            styles.removeBtn,
+                            removingId === product.id &&
+                              styles.primaryBtnDisabled,
+                          ]}
+                        >
+                          <Text style={styles.removeBtnText}>
+                            {removingId === product.id ? "Removing..." : "Remove"}
+                          </Text>
+                        </Pressable>
+                      </View>
                     </View>
                   );
                 })
@@ -659,23 +654,6 @@ export function AccountScreen() {
                     {formatMoney(calculateShoppingListTotal(products))}
                   </Text>
                 </View>
-                        onPress={() => void onRemove(product.id)}
-                        style={[
-                          styles.actionBtn,
-                          styles.removeBtn,
-                          removingId === product.id &&
-                            styles.primaryBtnDisabled,
-                        ]}
-                      >
-                        <Text style={styles.removeBtnText}>
-                          {removingId === product.id
-                            ? "Removing..."
-                            : "Remove"}
-                        </Text>
-                      </Pressable>
-                    </View>
-                  </View>
-                ))
               )}
             </View>
           </>

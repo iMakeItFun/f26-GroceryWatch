@@ -11,7 +11,11 @@ import {
 } from "react-native";
 import { ScreenHeader } from "../components/Chrome";
 import { colors } from "../theme";
-import { calculateFinalPrice, calculateTax, ESTIMATED_TAX_RATE } from "../tax";
+import {
+  calculateFinalPrice,
+  calculateTax,
+  ESTIMATED_TAX_RATE,
+} from "../tax";
 import {
   PriceHistoryModal,
   type PriceHistoryResponse,
@@ -340,8 +344,6 @@ export function SearchScreen({ onOpenSettings }: Props) {
 
   function listPrice(quote: KrogerPrice | undefined) {
     if (!quote) return null;
-    if (quote.promoPrice !== null) return quote.promoPrice;
-    return quote.price;
 
     if (quote.promoPrice !== null && ( quote.price === null || quote.promoPrice < quote.price)) {
       return quote.promoPrice
@@ -644,16 +646,20 @@ export function SearchScreen({ onOpenSettings }: Props) {
                   <Text style={styles.meta}>Barcode {product.barcode}</Text>
                 ) : null}
                 {quote?.price !== null && quote?.price !== undefined ? (
-                  <Text style={styles.price}>Shelf price {formatMoney(quote.price)}</Text>
+                  <Text style={styles.price}>
+                    Shelf price {formatMoney(quote.price)}
+                  </Text>
                 ) : null}
                 {quote?.promoPrice !== null && quote?.promoPrice !== undefined ? (
-                  <Text style={styles.promo}>Promo shelf price {formatMoney(quote.promoPrice)}</Text>
+                  <Text style={styles.promo}>
+                    Promo shelf price {formatMoney(quote.promoPrice)}
+                  </Text>
                 ) : null}
                 {price !== null ? (
                   <>
                     <Text style={styles.meta}>
-                      Estimated tax {formatMoney(calculateTax(price))} (
-                      {(ESTIMATED_TAX_RATE * 100).toFixed(0)}%)
+                      Estimated tax ({(ESTIMATED_TAX_RATE * 100).toFixed(0)}%):{" "}
+                      {formatMoney(calculateTax(price))}
                     </Text>
                     <Text style={styles.price}>
                       Estimated total {formatMoney(calculateFinalPrice(price))}
