@@ -7,20 +7,19 @@ import { HealthChip, ScreenHeader } from "../components/Chrome";
 type Props = {
   health: HealthState;
   onOpenSettings: () => void;
+  onOpenShoppingList: () => void;
 };
 
 function formatMoney(value: number) {
   return `$${value.toFixed(2)}`;
 }
 
-export function HomeScreen({ health, onOpenSettings }: Props) {
+export function HomeScreen({ health, onOpenSettings, onOpenShoppingList }: Props) {
   return (
     <View style={styles.root}>
       <ScreenHeader
         title="Home"
-        onListPress={() =>
-          Alert.alert("Shopping list", "Coming soon — shopping list is a deluxe feature.")
-        }
+        onListPress={onOpenShoppingList}
         onSettingsPress={onOpenSettings}
       />
 
