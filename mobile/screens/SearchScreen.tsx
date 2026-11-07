@@ -10,6 +10,7 @@ import {
   View,
 } from "react-native";
 import { ScreenHeader } from "../components/Chrome";
+import { requestDeviceCoordinates, showLocationPermissionDenied } from "../location";
 import { colors } from "../theme";
 import {
   PriceHistoryModal,
@@ -129,6 +130,7 @@ export function SearchScreen({ onOpenSettings }: Props) {
   const [stores, setStores] = useState<KrogerStore[]>([]);
   const [storeStatus, setStoreStatus] = useState<"idle" | "loading" | "error">("idle");
   const [storeError, setStoreError] = useState("");
+  const [storeSearchSource, setStoreSearchSource] = useState<"zip" | "location">("zip");
   const [selectedStoreId, setSelectedStoreId] = useState<string | null>(null);
   const [prices, setPrices] = useState<Record<string, KrogerPrice>>({});
   const [priceStatus, setPriceStatus] = useState<"idle" | "loading" | "error">("idle");
@@ -241,6 +243,7 @@ export function SearchScreen({ onOpenSettings }: Props) {
     setHistoryError("");
 
     if (!/^\d{5}$/.test(zip.trim()) || !API_URL || storeStatus === "loading") return;
+    setStoreSearchSource("zip");
     setStoreStatus("loading");
     setStoreError("");
     setStoresChecked(false);
@@ -264,6 +267,57 @@ export function SearchScreen({ onOpenSettings }: Props) {
       setStoreStatus("error");
       setStoreError("API unreachable");
       setStores([]);
+    }
+  }
+
+  async function onFindNearbyStores() {
+    if (storeStatus === "loading") return;
+    setStoreSearchSource("location");
+    setStoreStatus("loading");
+    setStoreError("");
+    setStoresChecked(false);
+    setSelectedStoreId(null);
+    setPrices({});
+    setPriceStatus("idle");
+    setPriceError("");
+    setStoreMatches([]);
+    setStores([]);
+
+    if (!API_URL) {
+      setStoreStatus("error");
+      setStoreError("API URL not set");
+      return;
+    }
+
+    // Show the right error if finding stores fails after we get the location.
+    let locating = true;
+    try {
+      const location = await requestDeviceCoordinates();
+      if (!location.granted) {
+        setStoreStatus("idle");
+        showLocationPermissionDenied(location.canAskAgain, setStoreError);
+        return;
+      }
+
+      locating = false;
+      const params = new URLSearchParams({
+        latitude: String(location.coordinates.latitude),
+        longitude: String(location.coordinates.longitude),
+      });
+      const res = await fetch(`${API_URL}/stores?${params.toString()}`);
+      if (!res.ok) {
+        setStoreStatus("error");
+        setStoreError(await readError(res));
+        return;
+      }
+      setStores((await res.json()) as KrogerStore[]);
+      setStoresChecked(true);
+      setStoreStatus("idle");
+    } catch {
+      setStoreStatus("error");
+      setStoreError(locating
+        ? "Could not get your location. Check location services or search by ZIP."
+        : "Could not reach the store search API. Try again or search by ZIP.");
     }
   }
 
@@ -551,6 +605,22 @@ export function SearchScreen({ onOpenSettings }: Props) {
         {status === "ready" && (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Nearby Kroger</Text>
+            <Pressable
+              accessibilityRole="button"
+              disabled={storeStatus === "loading"}
+              onPress={() => void onFindNearbyStores()}
+              style={[
+                styles.locationBtn,
+                storeStatus === "loading" && styles.searchBtnDisabled,
+              ]}
+            >
+              <Text style={styles.locationBtnText}>
+                {storeStatus === "loading" && storeSearchSource === "location"
+                  ? "Finding your location..."
+                  : "Use my location"}
+              </Text>
+            </Pressable>
+            <Text style={styles.hint}>Or search by ZIP code.</Text>
             <View style={styles.searchBar}>
               <TextInput
                 value={zip}
@@ -576,7 +646,7 @@ export function SearchScreen({ onOpenSettings }: Props) {
             </View>
             {storeError ? <Text style={styles.errorText}>{storeError}</Text> : null}
             {!storesChecked && stores.length === 0 && storeError === "" && results.length > 0 ? (
-              <Text style={styles.hint}>Enter a zip code to choose a Kroger.</Text>
+              <Text style={styles.hint}>Use your location or enter a ZIP code to choose a Kroger.</Text>
             ) : null}
             {stores.map((store) => {
               const selected = store.locationId === selectedStoreId;
@@ -593,7 +663,11 @@ export function SearchScreen({ onOpenSettings }: Props) {
               );
             })}
             {storesChecked && stores.length === 0 && storeError === "" ? (
-              <Text style={styles.hint}>No Kroger stores found for that zip.</Text>
+              <Text style={styles.hint}>
+                {storeSearchSource === "location"
+                  ? "No Kroger stores found near your location."
+                  : "No Kroger stores found for that zip."}
+              </Text>
             ) : null}
             {priceStatus === "loading" && (
               <View style={styles.statusRow}>
@@ -724,6 +798,15 @@ const styles = StyleSheet.create({
   },
   searchBtnDisabled: { opacity: 0.45 },
   searchBtnText: { color: colors.white, fontWeight: "700" },
+  locationBtn: {
+    borderWidth: 1,
+    borderColor: colors.green,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    alignItems: "center",
+  },
+  locationBtnText: { color: colors.greenDark, fontWeight: "700" },
   statusRow: { flexDirection: "row", alignItems: "center", gap: 8 },
   hint: { fontSize: 12, color: colors.muted },
   errorText: { color: colors.danger, fontSize: 14 },
