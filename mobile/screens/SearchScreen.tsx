@@ -13,6 +13,11 @@ import { ScreenHeader } from "../components/Chrome";
 import { requestDeviceCoordinates, showLocationPermissionDenied } from "../location";
 import { colors } from "../theme";
 import {
+  calculateFinalPrice,
+  calculateTax,
+  ESTIMATED_TAX_RATE,
+} from "../tax";
+import {
   PriceHistoryModal,
   type PriceHistoryResponse,
 } from "../components/PriceHistoryModal"
@@ -715,10 +720,25 @@ export function SearchScreen({ onOpenSettings }: Props) {
                   <Text style={styles.meta}>Barcode {product.barcode}</Text>
                 ) : null}
                 {quote?.price !== null && quote?.price !== undefined ? (
-                  <Text style={styles.price}>{formatMoney(quote.price)}</Text>
+                  <Text style={styles.price}>
+                    Shelf price {formatMoney(quote.price)}
+                  </Text>
                 ) : null}
                 {quote?.promoPrice !== null && quote?.promoPrice !== undefined ? (
-                  <Text style={styles.promo}>Promo {formatMoney(quote.promoPrice)}</Text>
+                  <Text style={styles.promo}>
+                    Promo shelf price {formatMoney(quote.promoPrice)}
+                  </Text>
+                ) : null}
+                {price !== null ? (
+                  <>
+                    <Text style={styles.meta}>
+                      Estimated tax ({(ESTIMATED_TAX_RATE * 100).toFixed(0)}%):{" "}
+                      {formatMoney(calculateTax(price))}
+                    </Text>
+                    <Text style={styles.price}>
+                      Estimated total {formatMoney(calculateFinalPrice(price))}
+                    </Text>
+                  </>
                 ) : null}
               </View>
 

@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -10,6 +10,12 @@ import {
 } from "react-native";
 import { ScreenHeader } from "../components/Chrome";
 import { colors, layout } from "../theme";
+import {
+  calculateFinalPrice,
+  calculateShoppingListTotal,
+  calculateTax,
+  ESTIMATED_TAX_RATE,
+} from "../tax";
 import {
   PriceHistoryModal,
   type PriceHistoryResponse,
@@ -524,7 +530,7 @@ export function AccountScreen() {
                 accessibilityLabel="Product name"
               />
 
-              <Text style={styles.label}>Current price</Text>
+              <Text style={styles.label}>Shelf price (before tax)</Text>
               <TextInput
                 value={price}
                 onChangeText={setPrice}
@@ -570,64 +576,84 @@ export function AccountScreen() {
 
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>Your list</Text>
+              {products.length > 0 && (
+                <Text style={styles.muted}>
+                  Estimated prices include {(ESTIMATED_TAX_RATE * 100).toFixed(0)}% tax.
+                </Text>
+              )}
               {products.length === 0 ? (
                 <Text style={styles.muted}>Nothing on your list yet.</Text>
               ) : (
-                products.map((product) => (
-                  <View key={product.id} style={styles.card}>
-                    <View style={styles.cardTop}>
-                      <Text style={styles.cardName}>{product.name}</Text>
-                      <Text style={styles.cardPrice}>{formatMoney(product.price)}</Text>
-                    </View>
-                    <Text style={styles.muted}>{product.location}</Text>
-                    {product.quantity !== null && (
-                      <Text style={styles.muted}>Qty {product.quantity}</Text>
-                    )}
-                    <View style={styles.cardActions}>
-                      <Pressable
-                        accessibilityRole="button"
-                        accessibilityLabel={`View price history for ${product.name}`}
-                        disabled={
-                          !product.barcode ||
-                          !product.external_store_id ||
-                          historyLoading
-                        }
-                        onPress={() => void onHistory(product)}
-                        style={[
-                          styles.actionBtn,
-                          styles.historyBtn,
-                          (!product.barcode ||
+                products.map((product) => {
+                  const quantity = product.quantity ?? 1;
+                  const subtotal = product.price * quantity;
+                  return (
+                    <View key={product.id} style={styles.card}>
+                      <View style={styles.cardTop}>
+                        <Text style={styles.cardName}>{product.name}</Text>
+                        <Text style={styles.cardPrice}>
+                          {formatMoney(calculateFinalPrice(subtotal))}
+                        </Text>
+                      </View>
+                      <Text style={styles.muted}>
+                        Shelf price {formatMoney(product.price)}
+                        {product.quantity !== null ? ` · Qty ${product.quantity}` : ""}
+                      </Text>
+                      <Text style={styles.muted}>
+                        Estimated tax ({(ESTIMATED_TAX_RATE * 100).toFixed(0)}%):{" "}
+                        {formatMoney(calculateTax(subtotal))}
+                      </Text>
+                      <Text style={styles.muted}>{product.location}</Text>
+                      <View style={styles.cardActions}>
+                        <Pressable
+                          accessibilityRole="button"
+                          accessibilityLabel={`View price history for ${product.name}`}
+                          disabled={
+                            !product.barcode ||
                             !product.external_store_id ||
-                            historyLoading) &&
-                            styles.primaryBtnDisabled,
-                        ]}
-                      >
-                        <Text style={styles.historyBtnText}>
-                          History
-                        </Text>
-                      </Pressable>
+                            historyLoading
+                          }
+                          onPress={() => void onHistory(product)}
+                          style={[
+                            styles.actionBtn,
+                            styles.historyBtn,
+                            (!product.barcode ||
+                              !product.external_store_id ||
+                              historyLoading) &&
+                              styles.primaryBtnDisabled,
+                          ]}
+                        >
+                          <Text style={styles.historyBtnText}>History</Text>
+                        </Pressable>
 
-                      <Pressable
-                        accessibilityRole="button"
-                        accessibilityLabel={`Remove ${product.name}`}
-                        disabled={removingId === product.id}
-                        onPress={() => void onRemove(product.id)}
-                        style={[
-                          styles.actionBtn,
-                          styles.removeBtn,
-                          removingId === product.id &&
-                            styles.primaryBtnDisabled,
-                        ]}
-                      >
-                        <Text style={styles.removeBtnText}>
-                          {removingId === product.id
-                            ? "Removing..."
-                            : "Remove"}
-                        </Text>
-                      </Pressable>
+                        <Pressable
+                          accessibilityRole="button"
+                          accessibilityLabel={`Remove ${product.name}`}
+                          disabled={removingId === product.id}
+                          onPress={() => void onRemove(product.id)}
+                          style={[
+                            styles.actionBtn,
+                            styles.removeBtn,
+                            removingId === product.id &&
+                              styles.primaryBtnDisabled,
+                          ]}
+                        >
+                          <Text style={styles.removeBtnText}>
+                            {removingId === product.id ? "Removing..." : "Remove"}
+                          </Text>
+                        </Pressable>
+                      </View>
                     </View>
-                  </View>
-                ))
+                  );
+                })
+              )}
+              {products.length > 0 && (
+                <View style={styles.cardTop}>
+                  <Text style={styles.cardName}>Estimated list total (incl. tax)</Text>
+                  <Text style={styles.cardPrice}>
+                    {formatMoney(calculateShoppingListTotal(products))}
+                  </Text>
+                </View>
               )}
             </View>
           </>
