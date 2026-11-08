@@ -6,15 +6,20 @@ export type ReviewInput = {
   comment: string;
 };
 
+export function parseReviewStoreId(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const locationId = value.trim();
+  return /^[a-zA-Z0-9_-]{1,40}$/.test(locationId) ? locationId : null;
+}
+
 export function parseReviewInput(body: unknown): ReviewInput | string {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     return "Request body is required.";
   }
 
   const raw = body as Record<string, unknown>;
-  const locationId =
-    typeof raw.locationId === "string" ? raw.locationId.trim() : "";
-  if (!/^[a-zA-Z0-9_-]{1,40}$/.test(locationId)) {
+  const locationId = parseReviewStoreId(raw.locationId);
+  if (!locationId) {
     return "A valid store is required.";
   }
 

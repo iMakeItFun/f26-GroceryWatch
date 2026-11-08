@@ -1,7 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { parseReviewInput } from "../src/reviews";
+import { parseReviewInput, parseReviewStoreId } from "../src/reviews";
+
+test("review store IDs accept Kroger IDs and reject invalid values", () => {
+  assert.equal(parseReviewStoreId(" 12345 "), "12345");
+  assert.equal(parseReviewStoreId("invalid/store"), null);
+  assert.equal(parseReviewStoreId(null), null);
+});
 
 test("review input trims text and validates store and rating", () => {
   assert.deepEqual(

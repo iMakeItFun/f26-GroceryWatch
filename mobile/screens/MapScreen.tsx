@@ -22,6 +22,20 @@ type KrogerStore = {
   longitude: number | null;
 };
 
+type StoreReview = {
+  id: string;
+  storeName: string;
+  rating: number;
+  comment: string;
+  createdAt: string;
+};
+
+type StoreReviewSummary = {
+  reviewCount: number;
+  averageRating: number | null;
+  reviews: StoreReview[];
+};
+
 function getSessionToken(): string | null {
   const storage = globalThis as typeof globalThis & {
     "grocerywatch-session"?: string;
@@ -93,6 +107,10 @@ export function MapScreen() {
   const [reviewComment, setReviewComment] = useState("");
   const [reviewStatus, setReviewStatus] = useState<"idle" | "saving" | "submitted" | "error">("idle");
   const [reviewMessage, setReviewMessage] = useState("");
+  const [reviewsStoreId, setReviewsStoreId] = useState<string | null>(null);
+  const [storeReviews, setStoreReviews] = useState<StoreReviewSummary | null>(null);
+  const [reviewsStatus, setReviewsStatus] = useState<"idle" | "loading" | "error">("idle");
+  const [reviewsError, setReviewsError] = useState("");
   const canSearch = /^\d{5}$/.test(zip.trim()) && status !== "loading";
   const mapped = stores.filter((store) => pinStyle(store, stores));
 
@@ -102,6 +120,43 @@ export function MapScreen() {
     setReviewComment("");
     setReviewStatus("idle");
     setReviewMessage("");
+  }
+
+  async function loadStoreReviews(store: KrogerStore) {
+    setStoreReviews(null);
+    setReviewsError("");
+    if (!API_URL) {
+      setReviewsStatus("error");
+      setReviewsError("API URL not set.");
+      return;
+    }
+
+    setReviewsStatus("loading");
+    try {
+      const res = await fetch(
+        `${API_URL}/stores/${encodeURIComponent(store.locationId)}/reviews`
+      );
+      if (!res.ok) {
+        setReviewsStatus("error");
+        setReviewsError(await readError(res, "Could not load store reviews."));
+        return;
+      }
+      setStoreReviews((await res.json()) as StoreReviewSummary);
+      setReviewsStatus("idle");
+    } catch {
+      setReviewsStatus("error");
+      setReviewsError("Could not reach the API. Please try again.");
+    }
+  }
+
+  async function onToggleReviews(store: KrogerStore) {
+    if (reviewsStoreId === store.locationId) {
+      setReviewsStoreId(null);
+      return;
+    }
+
+    setReviewsStoreId(store.locationId);
+    await loadStoreReviews(store);
   }
 
   async function onSubmitReview(store: KrogerStore) {
@@ -150,6 +205,9 @@ export function MapScreen() {
           : "Review submitted. Thanks for sharing your shopping experience."
       );
       setReviewComment("");
+      if (reviewsStoreId === store.locationId) {
+        await loadStoreReviews(store);
+      }
     } catch {
       setReviewStatus("error");
       setReviewMessage("Could not reach the API. Please try again.");
@@ -313,6 +371,50 @@ export function MapScreen() {
             <View style={styles.storeBody}>
               <Text style={styles.storeName}>{store.name}</Text>
               {store.address ? <Text style={styles.storeMeta}>{store.address}</Text> : null}
+              <Pressable
+                accessibilityRole="button"
+                accessibilityState={{ expanded: reviewsStoreId === store.locationId }}
+                onPress={() => void onToggleReviews(store)}
+                style={styles.reviewToggle}
+              >
+                <Text style={styles.reviewToggleText}>
+                  {reviewsStoreId === store.locationId ? "Hide reviews" : "View reviews"}
+                </Text>
+              </Pressable>
+              {reviewsStoreId === store.locationId ? (
+                <View style={styles.reviewList}>
+                  {reviewsStatus === "loading" ? (
+                    <View style={styles.statusRow}>
+                      <ActivityIndicator color={colors.greenDark} />
+                      <Text style={styles.hint}>Loading reviews...</Text>
+                    </View>
+                  ) : null}
+                  {reviewsError ? <Text style={styles.errorText}>{reviewsError}</Text> : null}
+                  {storeReviews ? (
+                    <>
+                      <Text style={styles.reviewSummary}>
+                        {storeReviews.averageRating === null
+                          ? "No ratings yet"
+                          : `${storeReviews.averageRating.toFixed(1)} / 5`}
+                        {` · ${storeReviews.reviewCount} ${storeReviews.reviewCount === 1 ? "review" : "reviews"}`}
+                      </Text>
+                      {storeReviews.reviews.length === 0 ? (
+                        <Text style={styles.storeMeta}>Be the first to review this store.</Text>
+                      ) : (
+                        storeReviews.reviews.map((review) => (
+                          <View key={review.id} style={styles.reviewItem}>
+                            <Text style={styles.reviewLabel}>{review.rating} / 5</Text>
+                            <Text style={styles.reviewComment}>{review.comment}</Text>
+                            <Text style={styles.reviewDate}>
+                              {new Date(review.createdAt).toLocaleDateString()}
+                            </Text>
+                          </View>
+                        ))
+                      )}
+                    </>
+                  ) : null}
+                </View>
+              ) : null}
               <Pressable
                 accessibilityRole="button"
                 onPress={() => openReview(store)}
@@ -483,6 +585,11 @@ const styles = StyleSheet.create({
   storeMeta: { color: colors.muted, fontSize: 13 },
   reviewToggle: { alignSelf: "flex-start", paddingVertical: 6 },
   reviewToggleText: { color: colors.greenDark, fontSize: 14, fontWeight: "700" },
+  reviewList: { gap: 8, paddingTop: 4 },
+  reviewSummary: { color: colors.text, fontSize: 15, fontWeight: "700" },
+  reviewItem: { gap: 3, borderTopWidth: 1, borderTopColor: colors.border, paddingTop: 8 },
+  reviewComment: { color: colors.text, fontSize: 14 },
+  reviewDate: { color: colors.muted, fontSize: 12 },
   reviewForm: { gap: 8, paddingTop: 6 },
   reviewLabel: { color: colors.text, fontSize: 13, fontWeight: "700" },
   ratingRow: { flexDirection: "row", gap: 8 },

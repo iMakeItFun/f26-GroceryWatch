@@ -24,7 +24,7 @@ import {
   padBarcode,
 } from "./kroger";
 import { trackKrogerPrice } from "./priceHistory";
-import { parseReviewInput } from "./reviews";
+import { parseReviewInput, parseReviewStoreId } from "./reviews";
 import {
   DEMO_STORE_ID,
   demoEnabled,
@@ -812,6 +812,75 @@ app.post("/reviews", async (req, reply) => {
       });
     }
     return reply.code(500).send({ error: "Could not save review." });
+  }
+});
+
+app.get("/stores/:locationId/reviews", async (req, reply) => {
+  const params = req.params as { locationId?: unknown };
+  const locationId = parseReviewStoreId(params.locationId);
+  if (!locationId) {
+    return reply.code(400).send({ error: "A valid store is required." });
+  }
+
+  try {
+    const result = await pool.query<{
+      review_count: string;
+      average_rating: string | null;
+      reviews: Array<{
+        id: string;
+        storeName: string;
+        rating: number;
+        comment: string;
+        createdAt: Date;
+      }>;
+    }>(
+      `SELECT
+         (SELECT COUNT(*)::text
+          FROM public.store_reviews
+          WHERE store_provider = 'kroger' AND external_store_id = $1) AS review_count,
+         (SELECT ROUND(AVG(rating)::numeric, 2)::text
+          FROM public.store_reviews
+          WHERE store_provider = 'kroger' AND external_store_id = $1) AS average_rating,
+         COALESCE(
+           (SELECT json_agg(json_build_object(
+              'id', recent.id,
+              'storeName', recent.store_name,
+              'rating', recent.rating,
+              'comment', recent.comment,
+              'createdAt', recent.created_at
+            ) ORDER BY recent.created_at DESC)
+            FROM (
+              SELECT id, store_name, rating, comment, created_at
+              FROM public.store_reviews
+              WHERE store_provider = 'kroger' AND external_store_id = $1
+              ORDER BY created_at DESC
+              LIMIT 50
+            ) AS recent),
+           '[]'::json
+         ) AS reviews`,
+      [locationId]
+    );
+    const summary = result.rows[0];
+    return {
+      reviewCount: Number(summary?.review_count ?? 0),
+      averageRating:
+        summary?.average_rating === null || summary?.average_rating === undefined
+          ? null
+          : Number(summary.average_rating),
+      reviews: summary?.reviews ?? [],
+    };
+  } catch (err) {
+    app.log.error(err);
+    const code =
+      typeof err === "object" && err !== null && "code" in err
+        ? (err as { code?: unknown }).code
+        : undefined;
+    if (code === "42P01" || code === "42703") {
+      return reply.code(503).send({
+        error: "Review database setup is incomplete. Apply the latest Supabase migration with `npx supabase db push`.",
+      });
+    }
+    return reply.code(500).send({ error: "Could not load store reviews." });
   }
 });
 
