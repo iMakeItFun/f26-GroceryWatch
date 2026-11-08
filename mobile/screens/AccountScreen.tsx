@@ -40,6 +40,32 @@ type SpottedProduct = {
   external_store_id: string | null;
 };
 
+type StoreComparison = {
+  id: string;
+  name: string;
+  address: string;
+  total: number;
+  pricedItems: number;
+  items: Array<{
+    id: string;
+    name: string;
+    quantity: number;
+    price: number | null;
+  }>;
+};
+
+type Store = {
+  locationId: string;
+  name: string;
+  address: string;
+};
+
+type StorePrice = {
+  barcode: string;
+  price: number | null;
+  promoPrice: number | null;
+};
+
 function formatMoney(value: number) {
   return `$${value.toFixed(2)}`;
 }
@@ -131,6 +157,14 @@ export function AccountScreen() {
   const [historyData, setHistoryData] = useState<PriceHistoryResponse | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState("");
+  const [zip, setZip] = useState("");
+  const [comparing, setComparing] = useState(false);
+  const [compareError, setCompareError] = useState("");
+  const [comparisons, setComparisons] = useState<StoreComparison[]>([]);
+  const [expandedStoreId, setExpandedStoreId] = useState<string | null>(null);
+  const [swapBusy, setSwapBusy] = useState<string | null>(null);
+  const [swapMessage, setSwapMessage] = useState("");
+  const [swapError, setSwapError] = useState("");
 
   const clearSession = useCallback(() => {
     writeSession(null);
@@ -222,6 +256,25 @@ export function AccountScreen() {
     name.trim().length > 0 &&
     price.trim().length > 0 &&
     location.trim().length > 0;
+  const comparableProducts = products.filter(
+    (product): product is SpottedProduct & { barcode: string } =>
+      product.barcode !== null
+  );
+  const productGroups = products.reduce<
+    Array<{ key: string; location: string; products: SpottedProduct[] }>
+  >((groups, product) => {
+    // Use the store ID when available; manual entries fall back to their location.
+    const key = product.external_store_id
+      ? `store:${product.external_store_id}`
+      : `location:${product.location}`;
+    let group = groups.find((candidate) => candidate.key === key);
+    if (!group) {
+      group = { key, location: product.location, products: [] };
+      groups.push(group);
+    }
+    group.products.push(product);
+    return groups;
+  }, []);
 
   async function onSubmitAuth() {
     if (!API_URL || !canSubmitAuth) return;
@@ -287,6 +340,233 @@ export function AccountScreen() {
       setFormError("API unreachable");
     } finally {
       setRemovingId(null);
+    }
+  }
+
+  async function onCompareStores() {
+    if (!API_URL || !session || !/^\d{5}$/.test(zip.trim()) || comparing) return;
+
+    setComparing(true);
+    setCompareError("");
+    setSwapMessage("");
+    setSwapError("");
+    setComparisons([]);
+
+    try {
+      const storesResponse = await fetch(
+        `${API_URL}/stores?zip=${encodeURIComponent(zip.trim())}`
+      );
+      if (!storesResponse.ok) {
+        setCompareError(await readError(storesResponse));
+        return;
+      }
+
+      const stores = (await storesResponse.json()) as Store[];
+      if (stores.length === 0) {
+        setCompareError("No nearby stores were found for that ZIP code.");
+        return;
+      }
+
+      if (comparableProducts.length === 0) {
+        setCompareError("Your list has no products with catalog barcodes to compare.");
+        return;
+      }
+
+      const barcodes = Array.from(
+        new Set(comparableProducts.map((product) => product.barcode))
+      );
+
+      const results = await Promise.all(
+        stores.map(async (store): Promise<StoreComparison | null> => {
+          try {
+            const prices = new Map<string, StorePrice>();
+
+            for (let offset = 0; offset < barcodes.length; offset += 20) {
+              const params = new URLSearchParams({
+                locationId: store.locationId,
+                barcodes: barcodes.slice(offset, offset + 20).join(","),
+              });
+              const response = await fetch(`${API_URL}/catalog/prices?${params}`);
+              if (!response.ok) throw new Error(await readError(response));
+
+              const quotes = (await response.json()) as StorePrice[];
+              for (const quote of quotes) prices.set(quote.barcode, quote);
+            }
+
+            let total = 0;
+            let pricedItems = 0;
+            const items = products.map((product) => {
+              const quantity = product.quantity ?? 1;
+              if (!product.barcode) {
+                return { id: product.id, name: product.name, quantity, price: null };
+              }
+
+              const quote = prices.get(product.barcode);
+              const price =
+                quote?.promoPrice !== null &&
+                quote?.promoPrice !== undefined &&
+                (quote.price === null || quote.promoPrice < quote.price)
+                  ? quote.promoPrice
+                  : quote?.price;
+
+              if (price === null || price === undefined) {
+                return { id: product.id, name: product.name, quantity, price: null };
+              }
+
+              total += price * quantity;
+              pricedItems += 1;
+              return { id: product.id, name: product.name, quantity, price };
+            });
+
+            return {
+              id: store.locationId,
+              name: store.name,
+              address: store.address,
+              total: Math.round(total * 100) / 100,
+              pricedItems,
+              items,
+            };
+          } catch {
+            return null;
+          }
+        })
+      );
+
+      const availableResults = results.filter(
+        (result): result is StoreComparison => result !== null
+      );
+      if (availableResults.length === 0) {
+        setCompareError("Kroger prices are temporarily unavailable. Please try again.");
+        return;
+      }
+
+      availableResults.sort((left, right) => {
+        if (left.pricedItems !== right.pricedItems) {
+          return right.pricedItems - left.pricedItems;
+        }
+        return left.total - right.total;
+      });
+      setComparisons(availableResults);
+      setExpandedStoreId(null);
+      if (availableResults.length < stores.length) {
+        const unavailableCount = stores.length - availableResults.length;
+        setCompareError(
+          `Prices unavailable at ${unavailableCount} ${
+            unavailableCount === 1 ? "store" : "stores"
+          }. Showing available results.`
+        );
+      }
+    } catch (error) {
+      setCompareError(
+        error instanceof Error ? error.message : "Could not compare store prices."
+      );
+    } finally {
+      setComparing(false);
+    }
+  }
+
+  async function onSwapEntireList(store: StoreComparison) {
+    if (
+      !API_URL ||
+      !session ||
+      store.pricedItems !== products.length ||
+      products.length === 0 ||
+      swapBusy
+    ) {
+      return;
+    }
+
+    setSwapBusy(`store:${store.id}`);
+    setSwapMessage("");
+    setSwapError("");
+
+    try {
+      const response = await fetch(`${API_URL}/products/swap-store`, {
+        method: "POST",
+        headers: {
+          ...authHeaders(session.token),
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          store: {
+            locationId: store.id,
+            name: store.name,
+            address: store.address,
+          },
+          items: store.items.map((item) => ({
+            id: item.id,
+            price: item.price,
+          })),
+        }),
+      });
+
+      if (!response.ok) {
+        setSwapError(await readError(response));
+        return;
+      }
+
+      const updatedProducts = (await response.json()) as SpottedProduct[];
+      const updatedById = new Map(
+        updatedProducts.map((product) => [product.id, product])
+      );
+      setProducts((current) =>
+        current.map((product) => updatedById.get(product.id) ?? product)
+      );
+      setSwapMessage(`Your entire list now uses ${store.name}.`);
+    } catch (error) {
+      setSwapError(
+        error instanceof Error ? error.message : "Could not swap the shopping list."
+      );
+    } finally {
+      setSwapBusy(null);
+    }
+  }
+
+  async function onSwapItem(
+    store: StoreComparison,
+    item: StoreComparison["items"][number]
+  ) {
+    if (!API_URL || !session || item.price === null || swapBusy) return;
+
+    setSwapBusy(`product:${item.id}`);
+    setSwapMessage("");
+    setSwapError("");
+
+    try {
+      const response = await fetch(`${API_URL}/products/${item.id}`, {
+        method: "PATCH",
+        headers: {
+          ...authHeaders(session.token),
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          price: item.price,
+          store: {
+            locationId: store.id,
+            name: store.name,
+            address: store.address,
+          },
+        }),
+      });
+
+      if (!response.ok) {
+        setSwapError(await readError(response));
+        return;
+      }
+
+      const updatedProduct = (await response.json()) as SpottedProduct;
+      setProducts((current) =>
+        current.map((product) =>
+          product.id === updatedProduct.id ? updatedProduct : product
+        )
+      );
+      setSwapMessage(`${updatedProduct.name} now uses ${store.name}.`);
+    } catch (error) {
+      setSwapError(
+        error instanceof Error ? error.message : "Could not swap this item."
+      );
+    } finally {
+      setSwapBusy(null);
     }
   }
 
@@ -570,66 +850,245 @@ export function AccountScreen() {
 
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>Your list</Text>
+              {products.length > 0 && (
+                <Text style={styles.total}>
+                  Saved-price total:{" "}
+                  {formatMoney(
+                    products.reduce(
+                      (sum, product) =>
+                        sum + product.price * (product.quantity ?? 1),
+                      0
+                    )
+                  )}
+                </Text>
+              )}
               {products.length === 0 ? (
                 <Text style={styles.muted}>Nothing on your list yet.</Text>
               ) : (
-                products.map((product) => (
-                  <View key={product.id} style={styles.card}>
-                    <View style={styles.cardTop}>
-                      <Text style={styles.cardName}>{product.name}</Text>
-                      <Text style={styles.cardPrice}>{formatMoney(product.price)}</Text>
+                productGroups.map((group) => (
+                  <View key={group.key} style={styles.storeGroup}>
+                    <View style={styles.storeGroupHeader}>
+                      <Text style={styles.storeGroupTitle}>{group.location}</Text>
+                      <Text style={styles.storeGroupCount}>
+                        {group.products.length}{" "}
+                        {group.products.length === 1 ? "item" : "items"}
+                      </Text>
                     </View>
-                    <Text style={styles.muted}>{product.location}</Text>
-                    {product.quantity !== null && (
-                      <Text style={styles.muted}>Qty {product.quantity}</Text>
-                    )}
-                    <View style={styles.cardActions}>
-                      <Pressable
-                        accessibilityRole="button"
-                        accessibilityLabel={`View price history for ${product.name}`}
-                        disabled={
-                          !product.barcode ||
-                          !product.external_store_id ||
-                          historyLoading
-                        }
-                        onPress={() => void onHistory(product)}
-                        style={[
-                          styles.actionBtn,
-                          styles.historyBtn,
-                          (!product.barcode ||
-                            !product.external_store_id ||
-                            historyLoading) &&
-                            styles.primaryBtnDisabled,
-                        ]}
-                      >
-                        <Text style={styles.historyBtnText}>
-                          History
-                        </Text>
-                      </Pressable>
+                    {group.products.map((product) => (
+                      <View key={product.id} style={styles.card}>
+                        <View style={styles.cardTop}>
+                          <Text style={styles.cardName}>{product.name}</Text>
+                          <Text style={styles.cardPrice}>{formatMoney(product.price)}</Text>
+                        </View>
+                        {product.quantity !== null && (
+                          <Text style={styles.muted}>Qty {product.quantity}</Text>
+                        )}
+                        <View style={styles.cardActions}>
+                          <Pressable
+                            accessibilityRole="button"
+                            accessibilityLabel={`View price history for ${product.name}`}
+                            disabled={
+                              !product.barcode ||
+                              !product.external_store_id ||
+                              historyLoading
+                            }
+                            onPress={() => void onHistory(product)}
+                            style={[
+                              styles.actionBtn,
+                              styles.historyBtn,
+                              (!product.barcode ||
+                                !product.external_store_id ||
+                                historyLoading) &&
+                                styles.primaryBtnDisabled,
+                            ]}
+                          >
+                            <Text style={styles.historyBtnText}>History</Text>
+                          </Pressable>
 
-                      <Pressable
-                        accessibilityRole="button"
-                        accessibilityLabel={`Remove ${product.name}`}
-                        disabled={removingId === product.id}
-                        onPress={() => void onRemove(product.id)}
-                        style={[
-                          styles.actionBtn,
-                          styles.removeBtn,
-                          removingId === product.id &&
-                            styles.primaryBtnDisabled,
-                        ]}
-                      >
-                        <Text style={styles.removeBtnText}>
-                          {removingId === product.id
-                            ? "Removing..."
-                            : "Remove"}
-                        </Text>
-                      </Pressable>
-                    </View>
+                          <Pressable
+                            accessibilityRole="button"
+                            accessibilityLabel={`Remove ${product.name}`}
+                            disabled={removingId === product.id}
+                            onPress={() => void onRemove(product.id)}
+                            style={[
+                              styles.actionBtn,
+                              styles.removeBtn,
+                              removingId === product.id &&
+                                styles.primaryBtnDisabled,
+                            ]}
+                          >
+                            <Text style={styles.removeBtnText}>
+                              {removingId === product.id
+                                ? "Removing..."
+                                : "Remove"}
+                            </Text>
+                          </Pressable>
+                        </View>
+                      </View>
+                    ))}
                   </View>
                 ))
               )}
             </View>
+
+            {products.length > 0 && (
+              <View style={styles.section}>
+                <Text style={styles.sectionTitle}>Compare store prices</Text>
+                <Text style={styles.muted}>
+                  Tap a store to see each item’s price. Some items may not have a store price.
+                </Text>
+                <View style={styles.compareRow}>
+                  <TextInput
+                    value={zip}
+                    onChangeText={setZip}
+                    onSubmitEditing={() => void onCompareStores()}
+                    placeholder="ZIP code"
+                    placeholderTextColor={colors.muted}
+                    keyboardType="number-pad"
+                    maxLength={5}
+                    accessibilityLabel="ZIP code for price comparison"
+                    style={[styles.input, styles.compareInput]}
+                  />
+                  <Pressable
+                    accessibilityRole="button"
+                    disabled={!/^\d{5}$/.test(zip.trim()) || comparing}
+                    onPress={() => void onCompareStores()}
+                    style={[
+                      styles.primaryBtn,
+                      styles.compareButton,
+                      (!/^\d{5}$/.test(zip.trim()) || comparing) &&
+                        styles.primaryBtnDisabled,
+                    ]}
+                  >
+                    <Text style={styles.primaryBtnText}>
+                      {comparing ? "Comparing..." : "Compare"}
+                    </Text>
+                  </Pressable>
+                </View>
+                {compareError ? <Text style={styles.errorText}>{compareError}</Text> : null}
+                {swapError ? <Text style={styles.errorText}>{swapError}</Text> : null}
+                {swapMessage ? <Text style={styles.successText}>{swapMessage}</Text> : null}
+                {comparisons.map((store) => {
+                  const expanded = expandedStoreId === store.id;
+                  const wholeListPriced =
+                    store.pricedItems === products.length && products.length > 0;
+                  const alreadyUsingStore =
+                    wholeListPriced &&
+                    store.items.every((item) => {
+                      const product = products.find((saved) => saved.id === item.id);
+                      return (
+                        product?.external_store_id === store.id &&
+                        product.price === item.price
+                      );
+                    });
+                  return (
+                    <View key={store.id} style={styles.compareCard}>
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel={`${expanded ? "Hide" : "Show"} price details for ${store.name}`}
+                        accessibilityState={{ expanded }}
+                        onPress={() =>
+                          setExpandedStoreId(expanded ? null : store.id)
+                        }
+                        style={styles.compareSummary}
+                      >
+                        <View style={styles.compareDetails}>
+                          <Text style={styles.cardName}>{store.name}</Text>
+                          <Text style={styles.muted}>{store.address}</Text>
+                          <Text style={styles.muted}>
+                            {store.pricedItems} of {products.length} items priced
+                          </Text>
+                        </View>
+                        <View style={styles.totalDetails}>
+                          <Text style={styles.muted}>Estimated total</Text>
+                          <Text style={styles.cardPrice}>{formatMoney(store.total)}</Text>
+                          <View style={styles.detailsButton}>
+                            <Text style={styles.detailsButtonText}>
+                              {expanded ? "Hide details" : "Details"}
+                            </Text>
+                            <Text style={styles.detailsArrow}>
+                              {expanded ? "⌃" : "⌄"}
+                            </Text>
+                          </View>
+                        </View>
+                      </Pressable>
+                      <Pressable
+                        accessibilityRole="button"
+                        disabled={!wholeListPriced || alreadyUsingStore || swapBusy !== null}
+                        onPress={() => void onSwapEntireList(store)}
+                        style={[
+                          styles.swapStoreButton,
+                          (!wholeListPriced || alreadyUsingStore || swapBusy !== null) &&
+                            styles.primaryBtnDisabled,
+                        ]}
+                      >
+                        <Text style={styles.swapStoreButtonText}>
+                          {swapBusy === `store:${store.id}`
+                            ? "Swapping list..."
+                            : alreadyUsingStore
+                              ? "List already uses this store"
+                              : "Swap entire list to this store"}
+                        </Text>
+                      </Pressable>
+                      {!wholeListPriced ? (
+                        <Text style={styles.muted}>
+                          Whole-list swap requires a price for every item.
+                        </Text>
+                      ) : null}
+                      {expanded &&
+                        store.items.map((item) => (
+                          <View key={item.id} style={styles.priceRow}>
+                            <View style={styles.compareDetails}>
+                              <Text style={styles.cardName}>{item.name}</Text>
+                              {item.quantity > 1 ? (
+                                <Text style={styles.muted}>Qty {item.quantity}</Text>
+                              ) : null}
+                            </View>
+                            <View style={styles.priceActions}>
+                              <Text style={item.price === null ? styles.muted : styles.itemPrice}>
+                                {item.price === null
+                                  ? "Unavailable"
+                                  : `${formatMoney(item.price)} each · ${formatMoney(
+                                      item.price * item.quantity
+                                    )}`}
+                              </Text>
+                              {item.price !== null ? (() => {
+                                const product = products.find(
+                                  (saved) => saved.id === item.id
+                                );
+                                const alreadyUsingPrice =
+                                  product?.external_store_id === store.id &&
+                                  product.price === item.price;
+                                return (
+                                  <Pressable
+                                    accessibilityRole="button"
+                                    accessibilityLabel={`Swap ${item.name} to ${store.name}`}
+                                    disabled={alreadyUsingPrice || swapBusy !== null}
+                                    onPress={() => void onSwapItem(store, item)}
+                                    style={[
+                                      styles.swapItemButton,
+                                      (alreadyUsingPrice || swapBusy !== null) &&
+                                        styles.primaryBtnDisabled,
+                                    ]}
+                                  >
+                                    <Text style={styles.swapItemButtonText}>
+                                      {swapBusy === `product:${item.id}`
+                                        ? "Swapping..."
+                                        : alreadyUsingPrice
+                                          ? "Current price"
+                                          : "Swap this item"}
+                                    </Text>
+                                  </Pressable>
+                                );
+                              })() : null}
+                            </View>
+                          </View>
+                        ))}
+                    </View>
+                  );
+                })}
+              </View>
+            )}
           </>
         )}
         </ScrollView>
@@ -717,6 +1176,18 @@ const styles = StyleSheet.create({
     padding: 14,
     gap: 4,
   },
+  storeGroup: { gap: 8, marginTop: 6 },
+  storeGroupHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    borderLeftWidth: 4,
+    borderLeftColor: colors.green,
+    paddingLeft: 10,
+    paddingVertical: 5,
+  },
+  storeGroupTitle: { flex: 1, color: colors.text, fontSize: 14, fontWeight: "800" },
+  storeGroupCount: { color: colors.greenDark, fontSize: 12, fontWeight: "700" },
   cardTop: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -725,6 +1196,68 @@ const styles = StyleSheet.create({
   },
   cardName: { flex: 1, fontWeight: "700", color: colors.text, fontSize: 16 },
   cardPrice: { fontWeight: "800", color: colors.greenDark, fontSize: 16 },
+  total: { color: colors.greenDark, fontSize: 16, fontWeight: "800" },
+  compareRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  compareInput: { flex: 1 },
+  compareButton: { marginTop: 0, paddingHorizontal: 16 },
+  compareCard: {
+    gap: 10,
+    padding: 12,
+    borderRadius: layout.radius,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.white,
+  },
+  compareSummary: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    padding: 8,
+    borderRadius: 10,
+    backgroundColor: colors.card,
+  },
+  compareDetails: { flex: 1, gap: 4 },
+  totalDetails: { alignItems: "flex-end", gap: 2 },
+  detailsButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    borderWidth: 1,
+    borderColor: colors.green,
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    marginTop: 3,
+  },
+  detailsButtonText: { color: colors.greenDark, fontSize: 12, fontWeight: "700" },
+  detailsArrow: { color: colors.greenDark, fontSize: 16, fontWeight: "800" },
+  successText: { color: colors.greenDark, fontSize: 14, fontWeight: "600" },
+  swapStoreButton: {
+    borderRadius: 10,
+    backgroundColor: colors.green,
+    alignItems: "center",
+    paddingVertical: 10,
+  },
+  swapStoreButtonText: { color: colors.white, fontWeight: "700", fontSize: 13 },
+  priceRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 12,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    paddingTop: 10,
+    marginHorizontal: 8,
+  },
+  itemPrice: { color: colors.greenDark, fontSize: 13, fontWeight: "700" },
+  priceActions: { alignItems: "flex-end", gap: 8 },
+  swapItemButton: {
+    borderWidth: 1,
+    borderColor: colors.greenDark,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  swapItemButtonText: { color: colors.greenDark, fontSize: 12, fontWeight: "700" },
   cardActions: {
     flexDirection: "row",
     alignItems: "center",
