@@ -25,6 +25,10 @@ import {
 import { trackKrogerPrice } from "./priceHistory";
 import { parseReviewInput } from "./reviews";
 import {
+  parseSingleProductSwapInput,
+  parseStoreSwapInput,
+} from "./productSwap";
+import {
   DEMO_STORE_ID,
   demoEnabled,
   isDemoStore,
@@ -40,7 +44,7 @@ const MAX_PRICE = 99_999_999.99;
 const DEMO_ZIP = "00000";
 
 const app = Fastify({ logger: true });
-app.register(cors, { methods: ["GET", "HEAD", "POST", "DELETE"] });
+app.register(cors, { methods: ["GET", "HEAD", "POST", "PATCH", "DELETE"] });
 
 function sendAuthDatabaseError(reply: FastifyReply, err: unknown, message: string) {
   app.log.error(err);
@@ -702,6 +706,130 @@ app.post("/products", async (req, reply) => {
   } catch (err) {
     app.log.error(err);
     return reply.code(500).send({ error: "Could not save product." });
+  }
+});
+
+app.patch("/products/:id", async (req, reply) => {
+  const session = await getSessionUserId(req as any, reply);
+  if (!session) return;
+
+  const id = (req.params as { id?: unknown }).id;
+  if (
+    typeof id !== "string" ||
+    !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(id)
+  ) {
+    return reply.code(400).send({ error: "A valid product ID is required." });
+  }
+
+  const parsed = parseSingleProductSwapInput(req.body);
+  if (typeof parsed === "string") {
+    return reply.code(400).send({ error: parsed });
+  }
+
+  const location = parsed.store.address
+    ? `${parsed.store.name}, ${parsed.store.address}`
+    : parsed.store.name;
+
+  try {
+    const result = await pool.query<ProductRow>(
+      `UPDATE public.shopping_list_items
+       SET price = $3, location = $4, external_store_id = $5
+       WHERE id = $1 AND user_id = $2 AND barcode IS NOT NULL
+       RETURNING *`,
+      [id, session.userId, parsed.price, location, parsed.store.locationId]
+    );
+    if (result.rows.length === 0) {
+      return reply.code(404).send({
+        error: "Product not found or it has no comparable barcode.",
+      });
+    }
+    return toProduct(result.rows[0]!);
+  } catch (err) {
+    app.log.error(err);
+    return reply.code(500).send({ error: "Could not swap the product." });
+  }
+});
+
+app.post("/products/swap-store", async (req, reply) => {
+  const session = await getSessionUserId(req as any, reply);
+  if (!session) return;
+
+  const parsed = parseStoreSwapInput(req.body);
+  if (typeof parsed === "string") {
+    return reply.code(400).send({ error: parsed });
+  }
+
+  const location = parsed.store.address
+    ? `${parsed.store.name}, ${parsed.store.address}`
+    : parsed.store.name;
+  const client = await pool.connect();
+  let transactionStarted = false;
+
+  try {
+    await client.query("BEGIN");
+    transactionStarted = true;
+
+    // Lock the saved list so concurrent edits cannot produce a partial swap.
+    const currentItems = await client.query<{ id: string; barcode: string | null }>(
+      `SELECT id, barcode
+       FROM public.shopping_list_items
+       WHERE user_id = $1
+       FOR UPDATE`,
+      [session.userId]
+    );
+    const requestedIds = new Set(parsed.items.map((item) => item.id));
+    const allItemsComparable =
+      currentItems.rows.length === parsed.items.length &&
+      currentItems.rows.every(
+        (item) => item.barcode !== null && requestedIds.has(item.id)
+      );
+
+    if (!allItemsComparable) {
+      await client.query("ROLLBACK");
+      transactionStarted = false;
+      return reply.code(409).send({
+        error: "Your list changed or includes items without comparable prices. Compare prices again.",
+      });
+    }
+
+    const values: Array<string | number> = [
+      session.userId,
+      location,
+      parsed.store.locationId,
+    ];
+    const rows = parsed.items.map((item) => {
+      values.push(item.id, item.price);
+      const idIndex = values.length - 1;
+      return `($${idIndex}::uuid, $${idIndex + 1}::numeric)`;
+    });
+    const updatedItems = await client.query<ProductRow>(
+      `UPDATE public.shopping_list_items AS product
+       SET price = updates.price,
+           location = $2,
+           external_store_id = $3
+       FROM (VALUES ${rows.join(", ")}) AS updates(id, price)
+       WHERE product.id = updates.id AND product.user_id = $1
+       RETURNING product.*`,
+      values
+    );
+
+    if (updatedItems.rows.length !== parsed.items.length) {
+      await client.query("ROLLBACK");
+      transactionStarted = false;
+      return reply.code(409).send({
+        error: "Your list changed while swapping stores. Compare prices again.",
+      });
+    }
+
+    await client.query("COMMIT");
+    transactionStarted = false;
+    return updatedItems.rows.map(toProduct);
+  } catch (err) {
+    if (transactionStarted) await client.query("ROLLBACK");
+    app.log.error(err);
+    return reply.code(500).send({ error: "Could not swap the shopping list." });
+  } finally {
+    client.release();
   }
 });
 

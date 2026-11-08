@@ -162,6 +162,9 @@ export function AccountScreen() {
   const [compareError, setCompareError] = useState("");
   const [comparisons, setComparisons] = useState<StoreComparison[]>([]);
   const [expandedStoreId, setExpandedStoreId] = useState<string | null>(null);
+  const [swapBusy, setSwapBusy] = useState<string | null>(null);
+  const [swapMessage, setSwapMessage] = useState("");
+  const [swapError, setSwapError] = useState("");
 
   const clearSession = useCallback(() => {
     writeSession(null);
@@ -257,6 +260,21 @@ export function AccountScreen() {
     (product): product is SpottedProduct & { barcode: string } =>
       product.barcode !== null
   );
+  const productGroups = products.reduce<
+    Array<{ key: string; location: string; products: SpottedProduct[] }>
+  >((groups, product) => {
+    // Use the store ID when available; manual entries fall back to their location.
+    const key = product.external_store_id
+      ? `store:${product.external_store_id}`
+      : `location:${product.location}`;
+    let group = groups.find((candidate) => candidate.key === key);
+    if (!group) {
+      group = { key, location: product.location, products: [] };
+      groups.push(group);
+    }
+    group.products.push(product);
+    return groups;
+  }, []);
 
   async function onSubmitAuth() {
     if (!API_URL || !canSubmitAuth) return;
@@ -330,6 +348,8 @@ export function AccountScreen() {
 
     setComparing(true);
     setCompareError("");
+    setSwapMessage("");
+    setSwapError("");
     setComparisons([]);
 
     try {
@@ -442,6 +462,111 @@ export function AccountScreen() {
       );
     } finally {
       setComparing(false);
+    }
+  }
+
+  async function onSwapEntireList(store: StoreComparison) {
+    if (
+      !API_URL ||
+      !session ||
+      store.pricedItems !== products.length ||
+      products.length === 0 ||
+      swapBusy
+    ) {
+      return;
+    }
+
+    setSwapBusy(`store:${store.id}`);
+    setSwapMessage("");
+    setSwapError("");
+
+    try {
+      const response = await fetch(`${API_URL}/products/swap-store`, {
+        method: "POST",
+        headers: {
+          ...authHeaders(session.token),
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          store: {
+            locationId: store.id,
+            name: store.name,
+            address: store.address,
+          },
+          items: store.items.map((item) => ({
+            id: item.id,
+            price: item.price,
+          })),
+        }),
+      });
+
+      if (!response.ok) {
+        setSwapError(await readError(response));
+        return;
+      }
+
+      const updatedProducts = (await response.json()) as SpottedProduct[];
+      const updatedById = new Map(
+        updatedProducts.map((product) => [product.id, product])
+      );
+      setProducts((current) =>
+        current.map((product) => updatedById.get(product.id) ?? product)
+      );
+      setSwapMessage(`Your entire list now uses ${store.name}.`);
+    } catch (error) {
+      setSwapError(
+        error instanceof Error ? error.message : "Could not swap the shopping list."
+      );
+    } finally {
+      setSwapBusy(null);
+    }
+  }
+
+  async function onSwapItem(
+    store: StoreComparison,
+    item: StoreComparison["items"][number]
+  ) {
+    if (!API_URL || !session || item.price === null || swapBusy) return;
+
+    setSwapBusy(`product:${item.id}`);
+    setSwapMessage("");
+    setSwapError("");
+
+    try {
+      const response = await fetch(`${API_URL}/products/${item.id}`, {
+        method: "PATCH",
+        headers: {
+          ...authHeaders(session.token),
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          price: item.price,
+          store: {
+            locationId: store.id,
+            name: store.name,
+            address: store.address,
+          },
+        }),
+      });
+
+      if (!response.ok) {
+        setSwapError(await readError(response));
+        return;
+      }
+
+      const updatedProduct = (await response.json()) as SpottedProduct;
+      setProducts((current) =>
+        current.map((product) =>
+          product.id === updatedProduct.id ? updatedProduct : product
+        )
+      );
+      setSwapMessage(`${updatedProduct.name} now uses ${store.name}.`);
+    } catch (error) {
+      setSwapError(
+        error instanceof Error ? error.message : "Could not swap this item."
+      );
+    } finally {
+      setSwapBusy(null);
     }
   }
 
@@ -740,59 +865,67 @@ export function AccountScreen() {
               {products.length === 0 ? (
                 <Text style={styles.muted}>Nothing on your list yet.</Text>
               ) : (
-                products.map((product) => (
-                  <View key={product.id} style={styles.card}>
-                    <View style={styles.cardTop}>
-                      <Text style={styles.cardName}>{product.name}</Text>
-                      <Text style={styles.cardPrice}>{formatMoney(product.price)}</Text>
+                productGroups.map((group) => (
+                  <View key={group.key} style={styles.storeGroup}>
+                    <View style={styles.storeGroupHeader}>
+                      <Text style={styles.storeGroupTitle}>{group.location}</Text>
+                      <Text style={styles.storeGroupCount}>
+                        {group.products.length}{" "}
+                        {group.products.length === 1 ? "item" : "items"}
+                      </Text>
                     </View>
-                    <Text style={styles.muted}>{product.location}</Text>
-                    {product.quantity !== null && (
-                      <Text style={styles.muted}>Qty {product.quantity}</Text>
-                    )}
-                    <View style={styles.cardActions}>
-                      <Pressable
-                        accessibilityRole="button"
-                        accessibilityLabel={`View price history for ${product.name}`}
-                        disabled={
-                          !product.barcode ||
-                          !product.external_store_id ||
-                          historyLoading
-                        }
-                        onPress={() => void onHistory(product)}
-                        style={[
-                          styles.actionBtn,
-                          styles.historyBtn,
-                          (!product.barcode ||
-                            !product.external_store_id ||
-                            historyLoading) &&
-                            styles.primaryBtnDisabled,
-                        ]}
-                      >
-                        <Text style={styles.historyBtnText}>
-                          History
-                        </Text>
-                      </Pressable>
+                    {group.products.map((product) => (
+                      <View key={product.id} style={styles.card}>
+                        <View style={styles.cardTop}>
+                          <Text style={styles.cardName}>{product.name}</Text>
+                          <Text style={styles.cardPrice}>{formatMoney(product.price)}</Text>
+                        </View>
+                        {product.quantity !== null && (
+                          <Text style={styles.muted}>Qty {product.quantity}</Text>
+                        )}
+                        <View style={styles.cardActions}>
+                          <Pressable
+                            accessibilityRole="button"
+                            accessibilityLabel={`View price history for ${product.name}`}
+                            disabled={
+                              !product.barcode ||
+                              !product.external_store_id ||
+                              historyLoading
+                            }
+                            onPress={() => void onHistory(product)}
+                            style={[
+                              styles.actionBtn,
+                              styles.historyBtn,
+                              (!product.barcode ||
+                                !product.external_store_id ||
+                                historyLoading) &&
+                                styles.primaryBtnDisabled,
+                            ]}
+                          >
+                            <Text style={styles.historyBtnText}>History</Text>
+                          </Pressable>
 
-                      <Pressable
-                        accessibilityRole="button"
-                        accessibilityLabel={`Remove ${product.name}`}
-                        disabled={removingId === product.id}
-                        onPress={() => void onRemove(product.id)}
-                        style={[
-                          styles.actionBtn,
-                          styles.removeBtn,
-                          removingId === product.id &&
-                            styles.primaryBtnDisabled,
-                        ]}
-                      >
-                        <Text style={styles.removeBtnText}>
-                          {removingId === product.id
-                            ? "Removing..."
-                            : "Remove"}
-                        </Text>
-                      </Pressable>
-                    </View>
+                          <Pressable
+                            accessibilityRole="button"
+                            accessibilityLabel={`Remove ${product.name}`}
+                            disabled={removingId === product.id}
+                            onPress={() => void onRemove(product.id)}
+                            style={[
+                              styles.actionBtn,
+                              styles.removeBtn,
+                              removingId === product.id &&
+                                styles.primaryBtnDisabled,
+                            ]}
+                          >
+                            <Text style={styles.removeBtnText}>
+                              {removingId === product.id
+                                ? "Removing..."
+                                : "Remove"}
+                            </Text>
+                          </Pressable>
+                        </View>
+                      </View>
+                    ))}
                   </View>
                 ))
               )}
@@ -833,12 +966,26 @@ export function AccountScreen() {
                   </Pressable>
                 </View>
                 {compareError ? <Text style={styles.errorText}>{compareError}</Text> : null}
+                {swapError ? <Text style={styles.errorText}>{swapError}</Text> : null}
+                {swapMessage ? <Text style={styles.successText}>{swapMessage}</Text> : null}
                 {comparisons.map((store) => {
                   const expanded = expandedStoreId === store.id;
+                  const wholeListPriced =
+                    store.pricedItems === products.length && products.length > 0;
+                  const alreadyUsingStore =
+                    wholeListPriced &&
+                    store.items.every((item) => {
+                      const product = products.find((saved) => saved.id === item.id);
+                      return (
+                        product?.external_store_id === store.id &&
+                        product.price === item.price
+                      );
+                    });
                   return (
                     <View key={store.id} style={styles.compareCard}>
                       <Pressable
                         accessibilityRole="button"
+                        accessibilityLabel={`${expanded ? "Hide" : "Show"} price details for ${store.name}`}
                         accessibilityState={{ expanded }}
                         onPress={() =>
                           setExpandedStoreId(expanded ? null : store.id)
@@ -855,9 +1002,39 @@ export function AccountScreen() {
                         <View style={styles.totalDetails}>
                           <Text style={styles.muted}>Estimated total</Text>
                           <Text style={styles.cardPrice}>{formatMoney(store.total)}</Text>
-                          <Text style={styles.muted}>{expanded ? "Hide" : "Details"}</Text>
+                          <View style={styles.detailsButton}>
+                            <Text style={styles.detailsButtonText}>
+                              {expanded ? "Hide details" : "Details"}
+                            </Text>
+                            <Text style={styles.detailsArrow}>
+                              {expanded ? "⌃" : "⌄"}
+                            </Text>
+                          </View>
                         </View>
                       </Pressable>
+                      <Pressable
+                        accessibilityRole="button"
+                        disabled={!wholeListPriced || alreadyUsingStore || swapBusy !== null}
+                        onPress={() => void onSwapEntireList(store)}
+                        style={[
+                          styles.swapStoreButton,
+                          (!wholeListPriced || alreadyUsingStore || swapBusy !== null) &&
+                            styles.primaryBtnDisabled,
+                        ]}
+                      >
+                        <Text style={styles.swapStoreButtonText}>
+                          {swapBusy === `store:${store.id}`
+                            ? "Swapping list..."
+                            : alreadyUsingStore
+                              ? "List already uses this store"
+                              : "Swap entire list to this store"}
+                        </Text>
+                      </Pressable>
+                      {!wholeListPriced ? (
+                        <Text style={styles.muted}>
+                          Whole-list swap requires a price for every item.
+                        </Text>
+                      ) : null}
                       {expanded &&
                         store.items.map((item) => (
                           <View key={item.id} style={styles.priceRow}>
@@ -867,13 +1044,44 @@ export function AccountScreen() {
                                 <Text style={styles.muted}>Qty {item.quantity}</Text>
                               ) : null}
                             </View>
-                            <Text style={item.price === null ? styles.muted : styles.itemPrice}>
-                              {item.price === null
-                                ? "Unavailable"
-                                : `${formatMoney(item.price)} each · ${formatMoney(
-                                    item.price * item.quantity
-                                  )}`}
-                            </Text>
+                            <View style={styles.priceActions}>
+                              <Text style={item.price === null ? styles.muted : styles.itemPrice}>
+                                {item.price === null
+                                  ? "Unavailable"
+                                  : `${formatMoney(item.price)} each · ${formatMoney(
+                                      item.price * item.quantity
+                                    )}`}
+                              </Text>
+                              {item.price !== null ? (() => {
+                                const product = products.find(
+                                  (saved) => saved.id === item.id
+                                );
+                                const alreadyUsingPrice =
+                                  product?.external_store_id === store.id &&
+                                  product.price === item.price;
+                                return (
+                                  <Pressable
+                                    accessibilityRole="button"
+                                    accessibilityLabel={`Swap ${item.name} to ${store.name}`}
+                                    disabled={alreadyUsingPrice || swapBusy !== null}
+                                    onPress={() => void onSwapItem(store, item)}
+                                    style={[
+                                      styles.swapItemButton,
+                                      (alreadyUsingPrice || swapBusy !== null) &&
+                                        styles.primaryBtnDisabled,
+                                    ]}
+                                  >
+                                    <Text style={styles.swapItemButtonText}>
+                                      {swapBusy === `product:${item.id}`
+                                        ? "Swapping..."
+                                        : alreadyUsingPrice
+                                          ? "Current price"
+                                          : "Swap this item"}
+                                    </Text>
+                                  </Pressable>
+                                );
+                              })() : null}
+                            </View>
                           </View>
                         ))}
                     </View>
@@ -968,6 +1176,18 @@ const styles = StyleSheet.create({
     padding: 14,
     gap: 4,
   },
+  storeGroup: { gap: 8, marginTop: 6 },
+  storeGroupHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    borderLeftWidth: 4,
+    borderLeftColor: colors.green,
+    paddingLeft: 10,
+    paddingVertical: 5,
+  },
+  storeGroupTitle: { flex: 1, color: colors.text, fontSize: 14, fontWeight: "800" },
+  storeGroupCount: { color: colors.greenDark, fontSize: 12, fontWeight: "700" },
   cardTop: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -998,9 +1218,30 @@ const styles = StyleSheet.create({
   },
   compareDetails: { flex: 1, gap: 4 },
   totalDetails: { alignItems: "flex-end", gap: 2 },
-  priceRow: {
+  detailsButton: {
     flexDirection: "row",
     alignItems: "center",
+    gap: 5,
+    borderWidth: 1,
+    borderColor: colors.green,
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    marginTop: 3,
+  },
+  detailsButtonText: { color: colors.greenDark, fontSize: 12, fontWeight: "700" },
+  detailsArrow: { color: colors.greenDark, fontSize: 16, fontWeight: "800" },
+  successText: { color: colors.greenDark, fontSize: 14, fontWeight: "600" },
+  swapStoreButton: {
+    borderRadius: 10,
+    backgroundColor: colors.green,
+    alignItems: "center",
+    paddingVertical: 10,
+  },
+  swapStoreButtonText: { color: colors.white, fontWeight: "700", fontSize: 13 },
+  priceRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
     gap: 12,
     borderTopWidth: 1,
     borderTopColor: colors.border,
@@ -1008,6 +1249,15 @@ const styles = StyleSheet.create({
     marginHorizontal: 8,
   },
   itemPrice: { color: colors.greenDark, fontSize: 13, fontWeight: "700" },
+  priceActions: { alignItems: "flex-end", gap: 8 },
+  swapItemButton: {
+    borderWidth: 1,
+    borderColor: colors.greenDark,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  swapItemButtonText: { color: colors.greenDark, fontSize: 12, fontWeight: "700" },
   cardActions: {
     flexDirection: "row",
     alignItems: "center",
