@@ -13,6 +13,11 @@ import { ScreenHeader } from "../components/Chrome";
 import { requestDeviceCoordinates, showLocationPermissionDenied } from "../location";
 import { colors } from "../theme";
 import {
+  calculateFinalPrice,
+  calculateTax,
+  getStateTaxRate,
+} from "../tax";
+import {
   PriceHistoryModal,
   type PriceHistoryResponse,
 } from "../components/PriceHistoryModal"
@@ -32,6 +37,7 @@ type KrogerStore = {
   locationId: string;
   name: string;
   address: string;
+  state: string | null;
 };
 
 type KrogerPrice = {
@@ -410,14 +416,18 @@ export function SearchScreen({ onOpenSettings }: Props) {
       : undefined;
 
     const price = listPrice(quote);
-
+    const taxState = stores.find((item) => item.locationId === selectedStoreId)?.state ?? null;
     if (
       !API_URL ||
       price === null ||
       !selectedStoreId ||
+      getStateTaxRate(taxState) === null ||
       addingKey ||
       addedKeys[key]
     ) {
+      if (price !== null && selectedStoreId && getStateTaxRate(taxState) === null) {
+        setAddError("The selected store's state is unavailable, so tax cannot be estimated.");
+      }
       return;
     }
 
@@ -466,6 +476,7 @@ export function SearchScreen({ onOpenSettings }: Props) {
             location,
             barcode: product.barcode,
             externalStoreId: selectedStoreId,
+            taxState,
           }),
         }
       );
@@ -697,12 +708,24 @@ export function SearchScreen({ onOpenSettings }: Props) {
         ) : null}
 
         {addError ? <Text style={styles.errorText}>{addError}</Text> : null}
+        {selectedStoreId !== null ? (
+          <Text style={styles.hint}>
+            Statewide base-rate estimate; local taxes and grocery exemptions may differ.
+          </Text>
+        ) : null}
 
         {visibleResults.map((product) => {
           const quote = product.barcode ? prices[product.barcode] : undefined;
           const key = productKey(product);
           const price = listPrice(quote);
-          const canAdd = price !== null && selectedStoreId !== null && !addedKeys[key];
+          const taxState =
+            stores.find((store) => store.locationId === selectedStoreId)?.state ?? null;
+          const taxRate = getStateTaxRate(taxState);
+          const canAdd =
+            price !== null &&
+            selectedStoreId !== null &&
+            taxRate !== null &&
+            !addedKeys[key];
           return (
             <View key={key} style={styles.row}>
               <View style={styles.rowBody}>
@@ -715,10 +738,28 @@ export function SearchScreen({ onOpenSettings }: Props) {
                   <Text style={styles.meta}>Barcode {product.barcode}</Text>
                 ) : null}
                 {quote?.price !== null && quote?.price !== undefined ? (
-                  <Text style={styles.price}>{formatMoney(quote.price)}</Text>
+                  <Text style={styles.price}>
+                    Shelf price {formatMoney(quote.price)}
+                  </Text>
                 ) : null}
                 {quote?.promoPrice !== null && quote?.promoPrice !== undefined ? (
-                  <Text style={styles.promo}>Promo {formatMoney(quote.promoPrice)}</Text>
+                  <Text style={styles.promo}>
+                    Promo shelf price {formatMoney(quote.promoPrice)}
+                  </Text>
+                ) : null}
+                {price !== null && taxRate !== null ? (
+                  <>
+                    <Text style={styles.meta}>
+                      Estimated state tax ({Number((taxRate * 100).toFixed(3))}%):{" "}
+                      {formatMoney(calculateTax(price, taxRate))}
+                    </Text>
+                    <Text style={styles.price}>
+                      Estimated total {formatMoney(calculateFinalPrice(price, taxRate))}
+                    </Text>
+                  </>
+                ) : null}
+                {price !== null && taxRate === null ? (
+                  <Text style={styles.meta}>Tax estimate unavailable: store state not provided.</Text>
                 ) : null}
               </View>
 

@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -10,6 +10,12 @@ import {
 } from "react-native";
 import { ScreenHeader } from "../components/Chrome";
 import { colors, layout } from "../theme";
+import {
+  calculateFinalPrice,
+  calculateShoppingListTotal,
+  calculateTax,
+  getStateTaxRate,
+} from "../tax";
 import {
   PriceHistoryModal,
   type PriceHistoryResponse,
@@ -38,6 +44,7 @@ type SpottedProduct = {
   quantity: number | null;
   barcode: string | null;
   external_store_id: string | null;
+  tax_state: string | null;
 };
 
 function formatMoney(value: number) {
@@ -214,6 +221,7 @@ export function AccountScreen() {
   const [price, setPrice] = useState("");
   const [location, setLocation] = useState("");
   const [quantity, setQuantity] = useState("");
+  const [taxState, setTaxState] = useState("");
 
   const canSubmitProduct =
     status === "ready" &&
@@ -221,7 +229,8 @@ export function AccountScreen() {
     !!session &&
     name.trim().length > 0 &&
     price.trim().length > 0 &&
-    location.trim().length > 0;
+    location.trim().length > 0 &&
+    getStateTaxRate(taxState) !== null;
 
   async function onSubmitAuth() {
     if (!API_URL || !canSubmitAuth) return;
@@ -345,10 +354,17 @@ export function AccountScreen() {
     setSaving(true);
     setFormError("");
 
-    const body: { name: string; price: number; location: string; quantity?: number } = {
+    const body: {
+      name: string;
+      price: number;
+      location: string;
+      quantity?: number;
+      taxState: string;
+    } = {
       name: name.trim(),
       price: Number(price),
       location: location.trim(),
+      taxState: taxState.trim().toUpperCase(),
     };
     if (quantity.trim()) {
       body.quantity = Number(quantity);
@@ -373,6 +389,7 @@ export function AccountScreen() {
       setPrice("");
       setLocation("");
       setQuantity("");
+      setTaxState("");
       await load(true);
     } catch {
       setFormError("API unreachable");
@@ -475,6 +492,14 @@ export function AccountScreen() {
     );
   }
 
+  const estimatedListTotal = calculateShoppingListTotal(
+    products.map((product) => ({
+      price: product.price,
+      quantity: product.quantity,
+      taxState: product.tax_state,
+    }))
+  );
+
   return (
     <View style={styles.root}>
       <ScreenHeader title="Account" showActions={false} />
@@ -524,7 +549,7 @@ export function AccountScreen() {
                 accessibilityLabel="Product name"
               />
 
-              <Text style={styles.label}>Current price</Text>
+              <Text style={styles.label}>Shelf price (before tax)</Text>
               <TextInput
                 value={price}
                 onChangeText={setPrice}
@@ -543,6 +568,18 @@ export function AccountScreen() {
                 placeholderTextColor={colors.muted}
                 style={styles.input}
                 accessibilityLabel="Location"
+              />
+
+              <Text style={styles.label}>State (2-letter code)</Text>
+              <TextInput
+                value={taxState}
+                onChangeText={(value) => setTaxState(value.toUpperCase())}
+                placeholder="VA"
+                placeholderTextColor={colors.muted}
+                autoCapitalize="characters"
+                maxLength={2}
+                style={styles.input}
+                accessibilityLabel="Tax state"
               />
 
               <Text style={styles.label}>Quantity</Text>
@@ -570,64 +607,95 @@ export function AccountScreen() {
 
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>Your list</Text>
+              {products.length > 0 && (
+                <Text style={styles.muted}>
+                  Estimates use statewide base rates. Local tax and grocery-specific exemptions are not included.
+                </Text>
+              )}
               {products.length === 0 ? (
                 <Text style={styles.muted}>Nothing on your list yet.</Text>
               ) : (
-                products.map((product) => (
-                  <View key={product.id} style={styles.card}>
-                    <View style={styles.cardTop}>
-                      <Text style={styles.cardName}>{product.name}</Text>
-                      <Text style={styles.cardPrice}>{formatMoney(product.price)}</Text>
-                    </View>
-                    <Text style={styles.muted}>{product.location}</Text>
-                    {product.quantity !== null && (
-                      <Text style={styles.muted}>Qty {product.quantity}</Text>
-                    )}
-                    <View style={styles.cardActions}>
-                      <Pressable
-                        accessibilityRole="button"
-                        accessibilityLabel={`View price history for ${product.name}`}
-                        disabled={
-                          !product.barcode ||
-                          !product.external_store_id ||
-                          historyLoading
-                        }
-                        onPress={() => void onHistory(product)}
-                        style={[
-                          styles.actionBtn,
-                          styles.historyBtn,
-                          (!product.barcode ||
+                products.map((product) => {
+                  const quantity = product.quantity ?? 1;
+                  const subtotal = product.price * quantity;
+                  const taxRate = getStateTaxRate(product.tax_state);
+                  return (
+                    <View key={product.id} style={styles.card}>
+                      <View style={styles.cardTop}>
+                        <Text style={styles.cardName}>{product.name}</Text>
+                        <Text style={styles.cardPrice}>
+                          {taxRate === null
+                            ? "State needed"
+                            : formatMoney(calculateFinalPrice(subtotal, taxRate))}
+                        </Text>
+                      </View>
+                      <Text style={styles.muted}>
+                        Shelf price {formatMoney(product.price)}
+                        {product.quantity !== null ? ` · Qty ${product.quantity}` : ""}
+                      </Text>
+                      {taxRate === null ? (
+                        <Text style={styles.muted}>
+                          State unavailable; add this item again with a state to estimate tax.
+                        </Text>
+                      ) : (
+                        <Text style={styles.muted}>
+                          Estimated state tax ({product.tax_state}):{" "}
+                          {formatMoney(calculateTax(subtotal, taxRate))}
+                        </Text>
+                      )}
+                      <Text style={styles.muted}>{product.location}</Text>
+                      <View style={styles.cardActions}>
+                        <Pressable
+                          accessibilityRole="button"
+                          accessibilityLabel={`View price history for ${product.name}`}
+                          disabled={
+                            !product.barcode ||
                             !product.external_store_id ||
-                            historyLoading) &&
-                            styles.primaryBtnDisabled,
-                        ]}
-                      >
-                        <Text style={styles.historyBtnText}>
-                          History
-                        </Text>
-                      </Pressable>
+                            historyLoading
+                          }
+                          onPress={() => void onHistory(product)}
+                          style={[
+                            styles.actionBtn,
+                            styles.historyBtn,
+                            (!product.barcode ||
+                              !product.external_store_id ||
+                              historyLoading) &&
+                              styles.primaryBtnDisabled,
+                          ]}
+                        >
+                          <Text style={styles.historyBtnText}>History</Text>
+                        </Pressable>
 
-                      <Pressable
-                        accessibilityRole="button"
-                        accessibilityLabel={`Remove ${product.name}`}
-                        disabled={removingId === product.id}
-                        onPress={() => void onRemove(product.id)}
-                        style={[
-                          styles.actionBtn,
-                          styles.removeBtn,
-                          removingId === product.id &&
-                            styles.primaryBtnDisabled,
-                        ]}
-                      >
-                        <Text style={styles.removeBtnText}>
-                          {removingId === product.id
-                            ? "Removing..."
-                            : "Remove"}
-                        </Text>
-                      </Pressable>
+                        <Pressable
+                          accessibilityRole="button"
+                          accessibilityLabel={`Remove ${product.name}`}
+                          disabled={removingId === product.id}
+                          onPress={() => void onRemove(product.id)}
+                          style={[
+                            styles.actionBtn,
+                            styles.removeBtn,
+                            removingId === product.id &&
+                              styles.primaryBtnDisabled,
+                          ]}
+                        >
+                          <Text style={styles.removeBtnText}>
+                            {removingId === product.id ? "Removing..." : "Remove"}
+                          </Text>
+                        </Pressable>
+                      </View>
                     </View>
-                  </View>
-                ))
+                  );
+                })
+              )}
+              {products.length > 0 && (
+                <View style={styles.cardTop}>
+                  <Text style={styles.cardName}>Estimated list total (incl. tax)</Text>
+                  <Text style={styles.cardPrice}>
+                    {estimatedListTotal === null
+                      ? "State needed"
+                      : formatMoney(estimatedListTotal)}
+                  </Text>
+                </View>
               )}
             </View>
           </>

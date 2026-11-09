@@ -40,6 +40,15 @@ import { publicApiRoutes } from "./publicApi";
 const PLACEHOLDER_USER_ID = "00000000-0000-0000-0000-000000000001";
 const MAX_PRICE = 99_999_999.99;
 const DEMO_ZIP = "00000";
+const US_STATE_CODES = new Set(
+  [
+    "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA", "HI",
+    "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD", "MA", "MI",
+    "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ", "NM", "NY", "NC",
+    "ND", "OH", "OK", "OR", "PA", "RI", "SC", "SD", "TN", "TX", "UT",
+    "VT", "VA", "WA", "WV", "WI", "WY", "DC",
+  ]
+);
 
 export const app = Fastify({ logger: true });
 app.register(cors, { methods: ["GET", "HEAD", "POST", "DELETE"] });
@@ -73,6 +82,7 @@ type ProductInput = {
   quantity: number | null;
   barcode: string | null;
   externalStoreId: string | null;
+  taxState: string | null;
 };
 
 type ProductRow = {
@@ -84,6 +94,7 @@ type ProductRow = {
   quantity: number | null;
   barcode: string | null;
   external_store_id: string | null;
+  tax_state: string | null;
   created_at: Date;
 };
 
@@ -156,6 +167,14 @@ function parseProductBody(body: unknown): string | ProductInput {
     return "Invalid store ID.";
   }
 
+  if (typeof raw.taxState !== "string") {
+    return "Tax state is required.";
+  }
+  const taxState = raw.taxState.trim().toUpperCase();
+  if (!US_STATE_CODES.has(taxState)) {
+    return "Tax state must be a valid two-letter US state code.";
+  }
+
   return {
     name,
     price: Math.round(price * 100) / 100,
@@ -163,6 +182,7 @@ function parseProductBody(body: unknown): string | ProductInput {
     quantity,
     barcode,
     externalStoreId,
+    taxState,
   };
 }
 
@@ -176,6 +196,7 @@ function toProduct(row: ProductRow) {
     quantity: row.quantity,
     barcode: row.barcode,
     external_store_id: row.external_store_id,
+    tax_state: row.tax_state,
     created_at: row.created_at,
   };
 }
@@ -674,6 +695,7 @@ app.get("/products", async (req, reply) => {
           quantity,
           barcode,
           external_store_id,
+          tax_state,
           created_at
       FROM public.spotted_products
       WHERE user_id = $1
@@ -705,9 +727,10 @@ app.post("/products", async (req, reply) => {
           location,
           quantity,
           barcode,
-          external_store_id
+          external_store_id,
+          tax_state
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
       RETURNING *`,
       [
         session.userId,
@@ -717,6 +740,7 @@ app.post("/products", async (req, reply) => {
         parsed.quantity,
         parsed.barcode,
         parsed.externalStoreId,
+        parsed.taxState,
       ]
     );
     const saved = result.rows[0];

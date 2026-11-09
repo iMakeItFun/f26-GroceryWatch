@@ -24,6 +24,7 @@ export type KrogerStore = {
   locationId: string;
   name: string;
   address: string;
+  state: string | null;
   latitude: number | null;
   longitude: number | null;
 };
@@ -173,6 +174,11 @@ async function storesFromResponse(response: Response): Promise<KrogerStore[]> {
       locationId: store.locationId,
       name: store.name,
       address: storeAddress(store.address ?? {}),
+      state:
+        typeof store.address?.state === "string" &&
+        /^[A-Za-z]{2}$/.test(store.address.state.trim())
+          ? store.address.state.trim().toUpperCase()
+          : null,
       latitude: coordinate(store.geolocation?.latitude),
       longitude: coordinate(store.geolocation?.longitude),
     });
