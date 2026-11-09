@@ -3,6 +3,8 @@ import { userEnv } from "./user-env";
 const TOKEN_URL = "https://api-ce.kroger.com/v1/connect/oauth2/token";
 const API_BASE = "https://api-ce.kroger.com/v1";
 const LOOKUP_BATCH = 4;
+const MAX_KROGER_RETRIES = 2;
+const MAX_RETRY_DELAY_MS = 3000;
 
 export class KrogerNotConfiguredError extends Error {
   constructor() {
@@ -119,15 +121,40 @@ async function accessToken() {
   return data.access_token;
 }
 
+function retryDelay(response: Response, attempt: number) {
+  const retryAfter = response.headers.get("retry-after");
+  if (retryAfter) {
+    const seconds = Number(retryAfter);
+    if (Number.isFinite(seconds) && seconds >= 0) {
+      return Math.min(seconds * 1000, MAX_RETRY_DELAY_MS);
+    }
+
+    const retryAt = Date.parse(retryAfter);
+    if (Number.isFinite(retryAt)) {
+      return Math.min(Math.max(retryAt - Date.now(), 0), MAX_RETRY_DELAY_MS);
+    }
+  }
+
+  return Math.min(250 * 2 ** attempt, MAX_RETRY_DELAY_MS);
+}
+
 async function krogerGet(path: string) {
   const token = await accessToken();
-  const response = await fetch(`${API_BASE}${path}`, {
-    headers: {
-      Authorization: `Bearer ${token}`,
-      Accept: "application/json",
-    },
-  });
-  return response;
+  for (let attempt = 0; ; attempt += 1) {
+    const response = await fetch(`${API_BASE}${path}`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/json",
+      },
+    });
+
+    const retryable = [429, 502, 503, 504].includes(response.status);
+    if (!retryable || attempt >= MAX_KROGER_RETRIES) return response;
+
+    const delay = retryDelay(response, attempt);
+    await response.body?.cancel();
+    await new Promise((resolve) => setTimeout(resolve, delay));
+  }
 }
 
 function coordinate(value: unknown) {
@@ -225,7 +252,9 @@ export async function searchProducts(term: string, locationId: string) {
 
   if (!response.ok) {
     throw new KrogerRequestError(
-      `Kroger product search failed (HTTP ${response.status}).`,
+      response.status === 503
+        ? "Kroger product search is temporarily unavailable (HTTP 503)."
+        : `Kroger product search failed (HTTP ${response.status}).`,
       response.status
     );
   }
