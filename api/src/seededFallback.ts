@@ -37,6 +37,7 @@ export async function demoStore(): Promise<KrogerStore | null> {
     locationId: DEMO_STORE_ID,
     name: "GroceryWatch DEMO (sample prices)",
     address: "Synthetic sample data - not a real Kroger store",
+    state: null,
     latitude: null,
     longitude: null,
   };
