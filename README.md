@@ -155,6 +155,8 @@ Use `EXPO_PUBLIC_API_URL=http://localhost:3000` in `mobile/.env`.
 
 Expo only reads `.env` when it starts, so restart it with `-c` (clears the cache) any time you change `mobile/.env`.
 
+The Map tab uses a clean street-map style with roads, place labels, parks, and water features. Web maps use OpenStreetMap tiles and need no Google Maps key; an internet connection is required to load tiles.
+
 ## Getting the Database URL
 
 1. Open the GroceryWatch project in the [Supabase dashboard](https://supabase.com/dashboard).
