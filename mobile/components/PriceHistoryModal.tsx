@@ -32,6 +32,15 @@ export type PriceHistoryResponse = {
         price: number;
         kind: "regular" | "promo";
         observedAt: string;
+        regularPrice: number | null;
+        promoPrice: number | null;
+        anomalous: boolean;
+
+        anomalyReasons: Array<
+            | "PRE_SALE_INFLATION"
+            | "INFLATED_REFERENCE_PRICE"
+            | "PERPETUAL_SALE"
+        >;
     }>;
 };
 
@@ -77,6 +86,33 @@ function money(price: number) {
 function dateLabel(timestamp: number) {
     return new Date(timestamp).toLocaleDateString(undefined, {month: "short", day: "numeric"});
 }
+
+
+const ANOMALY_LABELS = {
+    PRE_SALE_INFLATION:
+        "Possible pre-sale price inflation",
+
+    INFLATED_REFERENCE_PRICE:
+        "Unusually high reference price",
+
+    PERPETUAL_SALE:
+        "Frequently discounted product",
+};
+
+const ANOMALY_DESCRIPTIONS = {
+    PRE_SALE_INFLATION:
+        "The product's regular price was significantly " +
+        "higher than its earlier historical price shortly " +
+        "before this promotion.",
+
+    INFLATED_REFERENCE_PRICE:
+        "The advertised regular price is substantially " +
+        "higher than the product's historical typical price.",
+
+    PERPETUAL_SALE:
+        "This product has been on promotion for at least " +
+        "70% of its recently observed days.",
+};
 
 export function PriceHistoryModal({visible, productName, data, loading, error, onClose}: Props) {
     const [period, setPeriod] = useState<Period>("ALL");
@@ -280,7 +316,13 @@ export function PriceHistoryModal({visible, productName, data, loading, error, o
                                             cx={xOf(point.timestamp)}
                                             cy={yOf(point.price)}
                                             r={selected?.id === point.id ? 8 : 6}
-                                            fill={point.kind === "promo" ? colors.warn : colors.greenDark}
+                                            fill={
+                                                point.anomalous
+                                                    ? "#DC2626"
+                                                    : point.kind === "promo"
+                                                        ? colors.warn
+                                                        : colors.greenDark
+                                            }
                                             stroke={colors.white}
                                             strokeWidth={2}
                                             onPress={() => {
@@ -289,18 +331,42 @@ export function PriceHistoryModal({visible, productName, data, loading, error, o
                                         />
                                     ))}
                                 </Svg>
-
                                 {selected && (
                                     <View style={styles.tooltip}>
                                         <Text style={styles.tooltipPrice}>
                                             {money(selected.price)}
-                                            {selected.kind === "promo" ? " . Promotion" : " . Regular"}
+                                            {selected.kind === "promo"
+                                                ? " · Promotion"
+                                                : " · Regular"}
                                         </Text>
 
                                         <Text style={styles.muted}>
                                             Observed{" "}
                                             {new Date(selected.observedAt).toLocaleString()}
                                         </Text>
+
+                                        {selected.anomalous && (
+                                            <View style={styles.anomalyWarning}>
+                                                <Text style={styles.anomalyTitle}>
+                                                    ⚠ Potentially misleading sale
+                                                </Text>
+
+                                                {selected.anomalyReasons.map((reason) => (
+                                                    <View
+                                                        key={reason}
+                                                        style={styles.anomalyReason}
+                                                    >
+                                                        <Text style={styles.anomalyReasonTitle}>
+                                                            {ANOMALY_LABELS[reason]}
+                                                        </Text>
+
+                                                        <Text style={styles.anomalyDescription}>
+                                                            {ANOMALY_DESCRIPTIONS[reason]}
+                                                        </Text>
+                                                    </View>
+                                                ))}
+                                            </View>
+                                        )}
                                     </View>
                                 )}
                             </View>
@@ -441,5 +507,32 @@ const styles = StyleSheet.create({
     },
     error: {
         color: colors.danger,
-    }
+    },
+    anomalyWarning: {
+        marginTop: 12,
+        padding: 12,
+        backgroundColor: "#FEF2F2",
+        borderRadius: 8,
+        borderWidth: 1,
+        borderColor: "#FECACA",
+    },
+    anomalyTitle: {
+        fontSize: 14,
+        fontWeight: "700",
+        color: "#991B1B",
+    },
+    anomalyReason: {
+        marginTop: 10,
+    },
+    anomalyReasonTitle: {
+        fontSize: 13,
+        fontWeight: "600",
+        color: "#991B1B",
+    },
+    anomalyDescription: {
+        marginTop: 4,
+        fontSize: 12,
+        lineHeight: 18,
+        color: "#7F1D1D",
+    },
 });
