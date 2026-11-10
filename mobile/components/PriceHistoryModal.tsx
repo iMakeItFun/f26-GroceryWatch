@@ -310,7 +310,26 @@ export function PriceHistoryModal({visible, productName, data, loading, error, o
                                         fill="none"
                                     />
 
-                                    {points.map((point) =>(
+                                    {points.map((point, index) => {
+                                        const previous = points[index - 1];
+
+                                        const isFirst = index === 0;
+                                        const isLast = index === points.length - 1;
+
+                                        const priceChanged =
+                                            previous !== undefined &&
+                                            previous.price !== point.price;
+
+                                        const shouldShow =
+                                            isFirst ||
+                                            isLast ||
+                                            priceChanged ||
+                                            point.anomalous ||
+                                            selected?.id === point.id;
+
+                                        if (!shouldShow) return null;
+
+                                        return (
                                         <Circle
                                             key={point.id}
                                             cx={xOf(point.timestamp)}
@@ -329,7 +348,8 @@ export function PriceHistoryModal({visible, productName, data, loading, error, o
                                                 setSelectedId(point.id);
                                             }}
                                         />
-                                    ))}
+                                        );
+                                    })}
                                 </Svg>
                                 {selected && (
                                     <View style={styles.tooltip}>
