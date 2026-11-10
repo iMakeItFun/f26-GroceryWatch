@@ -4,6 +4,11 @@ import {
     padBarcode,
     pricesForBarcodes,
 } from "./kroger";
+import {
+    detectSaleAnomalies,
+    type PriceObservation,
+    type AnomalyType,
+} from "./saleAnomaly";
 
 type PriceKind = "regular" | "promo";
 
@@ -21,7 +26,11 @@ type HistoryRow = {
     price: string;
     price_kind: PriceKind;
     creation_time: Date;
-}
+    regular_price: string | null;
+    promo_price: string | null;
+    anomalous_flag: boolean;
+    anomaly_reasons: AnomalyType[];
+};
 
 export type PriceHistoryResponse = {
     listingId: string;
@@ -29,13 +38,19 @@ export type PriceHistoryResponse = {
     lastCheckedAt: Date | null;
     refreshed: boolean;
     refreshError?: string;
+
     history: Array<{
         id: string;
         price: number;
         kind: PriceKind;
         observedAt: Date;
+
+        regularPrice: number | null;
+        promoPrice: number | null;
+        anomalous: boolean;
+        anomalyReasons: AnomalyType[];
     }>;
-}
+};
 
 const PROVIDER = "kroger";
 const REFRESH_MS = 24 * 60 * 60 * 1000;
@@ -65,12 +80,16 @@ async function findListing(locationId: string, barcode: string): Promise<Listing
 }
 
 async function resultFor(listing: ListingRow, refreshed: boolean, refreshError?: string): Promise<PriceHistoryResponse> {
-    const { rows} = await pool.query<HistoryRow>(
+    const { rows } = await pool.query<HistoryRow>(
         `SELECT
             price_history_id,
             price,
             price_kind,
-            creation_time
+            creation_time,
+            regular_price,
+            promo_price,
+            anomalous_flag,
+            anomaly_reasons
         FROM public.price_history
         WHERE listing_id = $1
         ORDER BY creation_time DESC, price_history_id DESC
@@ -88,7 +107,18 @@ async function resultFor(listing: ListingRow, refreshed: boolean, refreshError?:
             id: row.price_history_id,
             price: Number(row.price),
             kind: row.price_kind,
-            observedAt: row.creation_time
+            observedAt: row.creation_time,
+
+            regularPrice: row.regular_price === null
+                ? null
+                : Number(row.regular_price),
+
+            promoPrice: row.promo_price === null
+                ? null
+                : Number(row.promo_price),
+
+            anomalous: row.anomalous_flag,
+            anomalyReasons: row.anomaly_reasons ?? [],
         })),
     }
 }
@@ -352,22 +382,79 @@ export async function trackKrogerPrice(input: {locationId: string; barcode: stri
                 throw new Error("No inventory or listing could be resolved.");
             }
 
-            if (!listing || listing.last_observed_price == null || Number(listing.last_observed_price) !== amount || listing.last_price_kind !== kind) {
-                await client.query(`
-                    INSERT INTO public.price_history (
-                        inventory_id,
-                        listing_id,
-                        price,
-                        price_kind,
-                        creation_time,
-                        anomalous_flag,
-                        last_updated
-                    )
-                    VALUES ($1, $2, $3, $4, NOW(), false, NOW()
-                    )`,
-                    [inventoryId, listingId, amount, kind]
-                );
-            }
+            const historicalResult = await client.query<{
+                price_history_id: string;
+                price: string;
+                regular_price: string | null;
+                promo_price: string | null;
+                creation_time: Date;
+            }>(`
+                SELECT
+                    price_history_id,
+                    price,
+                    regular_price,
+                    promo_price,
+                    creation_time
+                FROM public.price_history
+                WHERE listing_id = $1
+                    AND creation_time >= NOW() - INTERVAL '90 days'
+                ORDER BY creation_time ASC, price_history_id ASC
+            `, [listingId]);
+
+            const history: PriceObservation[] =
+                historicalResult.rows.map((row) => ({
+                    id: row.price_history_id,
+                    price: Number(row.price),
+                    regularPrice: row.regular_price === null
+                        ? null
+                        : Number(row.regular_price),
+                    promoPrice: row.promo_price === null
+                        ? null
+                        : Number(row.promo_price),
+                    observedAt: row.creation_time,
+                }));
+
+            const currentObservation: PriceObservation = {
+                id: "current",
+                price: amount,
+                regularPrice: regular,
+                promoPrice: promo,
+                observedAt: new Date(),
+            };
+
+            const anomalyResult = detectSaleAnomalies(
+                currentObservation,
+                history
+            );
+
+            await client.query(`
+                INSERT INTO public.price_history (
+                    inventory_id,
+                    listing_id,
+                    price,
+                    price_kind,
+                    regular_price,
+                    promo_price,
+                    anomalous_flag,
+                    anomaly_reasons,
+                    creation_time,
+                    last_updated
+                )
+                VALUES (
+                    $1, $2, $3, $4, $5,
+                    $6, $7, $8, NOW(), NOW()
+                )
+            `, [
+                inventoryId,
+                listingId,
+                amount,
+                kind,
+                regular,
+                promo,
+                anomalyResult.anomalous,
+                anomalyResult.reasons,
+            ]);
+
 
             await client.query(`
                 UPDATE public.external_listings

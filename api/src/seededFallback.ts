@@ -12,6 +12,8 @@ import type {
     PriceHistoryResponse,
 } from "./priceHistory";
 
+import type { AnomalyType } from "./saleAnomaly";
+
 export const DEMO_STORE_ID = "GW-DEMO-001";
 
 export const demoEnabled = process.env.ENABLE_KROGER_DEMO_FALLBACK === "true";
@@ -170,18 +172,26 @@ export async function demoHistory(
     price: string;
     price_kind: "regular" | "promo";
     creation_time: Date;
+    regular_price: string | null;
+    promo_price: string | null;
+    anomalous_flag: boolean;
+    anomaly_reasons: AnomalyType[];
   }>(
     `SELECT
         price_history_id,
         price,
         price_kind,
-        creation_time
+        creation_time,
+        regular_price,
+        promo_price,
+        anomalous_flag,
+        anomaly_reasons
      FROM public.price_history
      WHERE listing_id = $1
      ORDER BY creation_time DESC,
               price_history_id DESC
      LIMIT 100`,
-    [item.listing_id]
+    [item.listing_id,]
   );
 
   return {
@@ -194,6 +204,17 @@ export async function demoHistory(
       price: Number(row.price),
       kind: row.price_kind,
       observedAt: row.creation_time,
-    })),
+
+      regularPrice: row.regular_price === null
+          ? null
+          : Number(row.regular_price),
+
+      promoPrice: row.promo_price === null
+          ? null
+          : Number(row.promo_price),
+
+      anomalous: row.anomalous_flag,
+      anomalyReasons: row.anomaly_reasons ?? [],
+  })),
   };
 }
