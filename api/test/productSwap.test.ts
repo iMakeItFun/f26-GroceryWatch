@@ -56,9 +56,21 @@ test("single-item swaps validate the selected price and store", () => {
     parseSingleProductSwapInput({ store, price: "3.25" }),
     { store, price: 3.25 }
   );
+  assert.deepEqual(
+    parseSingleProductSwapInput({ store, price: "$3.25" }),
+    { store, price: 3.25 }
+  );
   assert.equal(
-    typeof parseSingleProductSwapInput({ store, price: -1 }),
-    "string"
+    parseSingleProductSwapInput({ store, price: 0 }),
+    "Price must be a number greater than 0."
+  );
+  assert.equal(
+    parseSingleProductSwapInput({ store, price: -1 }),
+    "Price must be a number greater than 0."
+  );
+  assert.equal(
+    parseSingleProductSwapInput({ store, price: null }),
+    "Price must be a number greater than 0."
   );
   assert.equal(
     typeof parseSingleProductSwapInput({

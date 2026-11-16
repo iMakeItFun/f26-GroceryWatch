@@ -109,15 +109,20 @@ function parseProductBody(body: unknown): string | ProductInput {
     return "Price is required.";
   }
 
+  const priceStr =
+    typeof raw.price === "string"
+      ? raw.price.trim().replace(/^\$/, "")
+      : raw.price;
+
   const price =
-    typeof raw.price === "number"
-      ? raw.price
-      : typeof raw.price === "string"
-        ? Number(raw.price)
+    typeof priceStr === "number"
+      ? priceStr
+      : typeof priceStr === "string"
+        ? Number(priceStr)
         : Number.NaN;
 
-  if (!Number.isFinite(price) || price < 0 || price > MAX_PRICE) {
-    return "Price must be a number zero or greater.";
+  if (!Number.isFinite(price) || price <= 0 || price > MAX_PRICE) {
+    return "Price must be a number greater than 0.";
   }
 
   let quantity: number | null = null;

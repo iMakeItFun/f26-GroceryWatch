@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -326,6 +326,8 @@ export function AccountScreen() {
     if (!API_URL || removingId || !session) return;
     setRemovingId(id);
     setFormError("");
+    setSwapMessage("");
+    setSwapError("");
     try {
       const res = await fetch(`${API_URL}/products/${id}`, {
         method: "DELETE",
@@ -336,6 +338,7 @@ export function AccountScreen() {
         return;
       }
       setProducts((current) => current.filter((product) => product.id !== id));
+      setComparisons([]);
     } catch {
       setFormError("API unreachable");
     } finally {
@@ -466,13 +469,23 @@ export function AccountScreen() {
   }
 
   async function onSwapEntireList(store: StoreComparison) {
+    const currentProductIds = new Set(products.map((p) => p.id));
+    const validItems = store.items.filter(
+      (item) =>
+        currentProductIds.has(item.id) &&
+        item.price !== null &&
+        item.price !== undefined &&
+        item.price > 0
+    );
+
     if (
       !API_URL ||
       !session ||
-      store.pricedItems !== products.length ||
+      validItems.length !== products.length ||
       products.length === 0 ||
       swapBusy
     ) {
+      setSwapError("Your list changed or contains unpriced items. Please compare prices again.");
       return;
     }
 
@@ -493,7 +506,7 @@ export function AccountScreen() {
             name: store.name,
             address: store.address,
           },
-          items: store.items.map((item) => ({
+          items: validItems.map((item) => ({
             id: item.id,
             price: item.price,
           })),
@@ -622,12 +635,21 @@ export function AccountScreen() {
   async function onSubmitProduct() {
     if (!canSubmitProduct || !session || !API_URL) return;
 
+    const cleanPrice = price.trim().replace(/^\$/, "");
+    const numPrice = Number(cleanPrice);
+    if (!Number.isFinite(numPrice) || numPrice <= 0) {
+      setFormError("Price must be a number greater than 0.");
+      return;
+    }
+
     setSaving(true);
     setFormError("");
+    setSwapMessage("");
+    setSwapError("");
 
     const body: { name: string; price: number; location: string; quantity?: number } = {
       name: name.trim(),
-      price: Number(price),
+      price: numPrice,
       location: location.trim(),
     };
     if (quantity.trim()) {
@@ -653,6 +675,7 @@ export function AccountScreen() {
       setPrice("");
       setLocation("");
       setQuantity("");
+      setComparisons([]);
       await load(true);
     } catch {
       setFormError("API unreachable");

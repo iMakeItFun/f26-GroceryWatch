@@ -34,14 +34,18 @@ function parseStoreChoice(value: unknown): StoreChoice | string {
 }
 
 function parsePrice(value: unknown): number | string {
+  if (value === null || value === undefined || value === "") {
+    return "Price must be a number greater than 0.";
+  }
+
   const price =
     typeof value === "number"
       ? value
       : typeof value === "string"
-        ? Number(value)
+        ? Number(value.trim().replace(/^\$/, ""))
         : Number.NaN;
-  if (!Number.isFinite(price) || price < 0 || price > 99_999_999.99) {
-    return "Price must be a number zero or greater.";
+  if (!Number.isFinite(price) || price <= 0 || price > 99_999_999.99) {
+    return "Price must be a number greater than 0.";
   }
 
   return Math.round(price * 100) / 100;
