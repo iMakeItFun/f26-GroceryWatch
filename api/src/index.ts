@@ -30,6 +30,13 @@ import {
   parseStoreSwapInput,
 } from "./productSwap";
 import {
+  parseCartComparisonInput,
+  calculateStoreComparison,
+  rankStoreComparisons,
+  StoreQuote,
+  CalculatedStoreComparison,
+} from "./cartComparison";
+import {
   DEMO_STORE_ID,
   demoEnabled,
   isDemoStore,
@@ -464,6 +471,73 @@ app.get("/catalog/prices", async (req, reply) => {
 
     app.log.error(error);
     return krogerError(error, reply);
+  }
+});
+
+app.post("/cart/compare", async (req, reply) => {
+  const parsed = parseCartComparisonInput(req.body);
+  if (typeof parsed === "string") {
+    return reply.code(400).send({ error: parsed });
+  }
+
+  try {
+    let stores: Array<{ locationId: string; name: string; address: string }>;
+    if (parsed.zip === DEMO_ZIP) {
+      if (!demoEnabled) {
+        return reply.code(404).send({ error: "Demo mode is disabled." });
+      }
+      const store = await demoStore();
+      if (!store) {
+        return reply.code(404).send({ error: "Demo store was not found in the database." });
+      }
+      stores = [store];
+    } else {
+      stores = await searchStores(parsed.zip);
+    }
+
+    if (!stores || stores.length === 0) {
+      return reply.code(404).send({ error: "No nearby stores found for that ZIP code." });
+    }
+
+    const barcodes = Array.from(
+      new Set(
+        parsed.items
+          .map((item) => item.barcode)
+          .filter((barcode): barcode is string => Boolean(barcode))
+      )
+    );
+
+    if (barcodes.length === 0) {
+      return reply.code(400).send({ error: "No items have barcodes to compare." });
+    }
+
+    const results: CalculatedStoreComparison[] = [];
+    for (const store of stores) {
+      try {
+        const quotesMap = new Map<string, StoreQuote>();
+        for (let offset = 0; offset < barcodes.length; offset += 20) {
+          const batch = barcodes.slice(offset, offset + 20);
+          const quotes = isDemoStore(store.locationId)
+            ? await demoPrices(store.locationId, batch)
+            : await pricesForBarcodes(store.locationId, batch);
+          for (const q of quotes) {
+            quotesMap.set(q.barcode, q);
+          }
+        }
+        results.push(calculateStoreComparison(store, parsed.items, quotesMap));
+      } catch {
+        // Skip stores where pricing could not be retrieved
+      }
+    }
+
+    if (results.length === 0) {
+      return reply.code(502).send({ error: "Store prices are temporarily unavailable." });
+    }
+
+    return rankStoreComparisons(results);
+  } catch (err) {
+    app.log.error(err instanceof KrogerRequestError ? err.message : err);
+    return krogerError(err, reply);
   }
 });
 

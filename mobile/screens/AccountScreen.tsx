@@ -358,110 +358,38 @@ export function AccountScreen() {
     setSwapError("");
     setComparisons([]);
 
+    if (comparableProducts.length === 0) {
+      setCompareError("Your list has no products with catalog barcodes to compare.");
+      setComparing(false);
+      return;
+    }
+
     try {
-      const storesResponse = await fetch(
-        `${API_URL}/stores?zip=${encodeURIComponent(zip.trim())}`
-      );
-      if (!storesResponse.ok) {
-        setCompareError(await readError(storesResponse));
-        return;
-      }
-
-      const stores = (await storesResponse.json()) as Store[];
-      if (stores.length === 0) {
-        setCompareError("No nearby stores were found for that ZIP code.");
-        return;
-      }
-
-      if (comparableProducts.length === 0) {
-        setCompareError("Your list has no products with catalog barcodes to compare.");
-        return;
-      }
-
-      const barcodes = Array.from(
-        new Set(comparableProducts.map((product) => product.barcode))
-      );
-
-      const results = await Promise.all(
-        stores.map(async (store): Promise<StoreComparison | null> => {
-          try {
-            const prices = new Map<string, StorePrice>();
-
-            for (let offset = 0; offset < barcodes.length; offset += 20) {
-              const params = new URLSearchParams({
-                locationId: store.locationId,
-                barcodes: barcodes.slice(offset, offset + 20).join(","),
-              });
-              const response = await fetch(`${API_URL}/catalog/prices?${params}`);
-              if (!response.ok) throw new Error(await readError(response));
-
-              const quotes = (await response.json()) as StorePrice[];
-              for (const quote of quotes) prices.set(quote.barcode, quote);
-            }
-
-            let total = 0;
-            let pricedItems = 0;
-            const items = products.map((product) => {
-              const quantity = product.quantity ?? 1;
-              if (!product.barcode) {
-                return { id: product.id, name: product.name, quantity, price: null };
-              }
-
-              const quote = prices.get(product.barcode);
-              const price =
-                quote?.promoPrice !== null &&
-                quote?.promoPrice !== undefined &&
-                (quote.price === null || quote.promoPrice < quote.price)
-                  ? quote.promoPrice
-                  : quote?.price;
-
-              if (price === null || price === undefined) {
-                return { id: product.id, name: product.name, quantity, price: null };
-              }
-
-              total += price * quantity;
-              pricedItems += 1;
-              return { id: product.id, name: product.name, quantity, price };
-            });
-
-            return {
-              id: store.locationId,
-              name: store.name,
-              address: store.address,
-              total: Math.round(total * 100) / 100,
-              pricedItems,
-              items,
-            };
-          } catch {
-            return null;
-          }
-        })
-      );
-
-      const availableResults = results.filter(
-        (result): result is StoreComparison => result !== null
-      );
-      if (availableResults.length === 0) {
-        setCompareError("Kroger prices are temporarily unavailable. Please try again.");
-        return;
-      }
-
-      availableResults.sort((left, right) => {
-        if (left.pricedItems !== right.pricedItems) {
-          return right.pricedItems - left.pricedItems;
-        }
-        return left.total - right.total;
+      const response = await fetch(`${API_URL}/cart/compare`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...authHeaders(session.token),
+        },
+        body: JSON.stringify({
+          zip: zip.trim(),
+          items: products.map((product) => ({
+            id: product.id,
+            name: product.name,
+            barcode: product.barcode,
+            quantity: product.quantity ?? 1,
+          })),
+        }),
       });
-      setComparisons(availableResults);
-      setExpandedStoreId(null);
-      if (availableResults.length < stores.length) {
-        const unavailableCount = stores.length - availableResults.length;
-        setCompareError(
-          `Prices unavailable at ${unavailableCount} ${
-            unavailableCount === 1 ? "store" : "stores"
-          }. Showing available results.`
-        );
+
+      if (!response.ok) {
+        setCompareError(await readError(response));
+        return;
       }
+
+      const results = (await response.json()) as StoreComparison[];
+      setComparisons(results);
+      setExpandedStoreId(null);
     } catch (error) {
       setCompareError(
         error instanceof Error ? error.message : "Could not compare store prices."
