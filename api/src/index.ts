@@ -30,6 +30,11 @@ import {
   parseStoreSwapInput,
 } from "./productSwap";
 import {
+  calculateTaxEstimate,
+  parseTaxEstimateInput,
+  TaxLocationNotFoundError,
+} from "./tax";
+import {
   DEMO_STORE_ID,
   demoEnabled,
   isDemoStore,
@@ -693,6 +698,26 @@ app.get("/products", async (req, reply) => {
   } catch (err) {
     app.log.error(err);
     return reply.code(500).send({ error: "Could not load products." });
+  }
+});
+
+app.post("/tax/estimate", async (req, reply) => {
+  const session = await getSessionUserId(req as any, reply);
+  if (!session) return;
+
+  const parsed = parseTaxEstimateInput(req.body);
+  if (typeof parsed === "string") {
+    return reply.code(400).send({ error: parsed });
+  }
+
+  try {
+    return await calculateTaxEstimate(parsed);
+  } catch (err) {
+    if (err instanceof TaxLocationNotFoundError) {
+      return reply.code(422).send({ error: err.message });
+    }
+    app.log.error(err);
+    return reply.code(502).send({ error: "Could not calculate the tax estimate." });
   }
 });
 
