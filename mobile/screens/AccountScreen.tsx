@@ -45,12 +45,41 @@ type StoreComparison = {
   name: string;
   address: string;
   total: number;
+  subtotal: number;
+  tax: number | null;
+  taxRate: number | null;
+  taxRateBasis: "taxjar" | "state_estimate" | null;
+  taxZip: string;
   pricedItems: number;
   items: Array<{
     id: string;
     name: string;
     quantity: number;
     price: number | null;
+    subtotal: number | null;
+    tax: number | null;
+    taxRate: number | null;
+    total: number | null;
+  }>;
+};
+
+type TaxEstimate = {
+  rateBasis: "taxjar" | "state_estimate";
+  zip: string;
+  jurisdiction: {
+    city: string | null;
+    state: string;
+  };
+  rate: number;
+  subtotal: number;
+  tax: number;
+  total: number;
+  items: Array<{
+    id: string;
+    rate: number;
+    subtotal: number;
+    tax: number;
+    total: number;
   }>;
 };
 
@@ -68,6 +97,34 @@ type StorePrice = {
 
 function formatMoney(value: number) {
   return `$${value.toFixed(2)}`;
+}
+
+function formatTaxRate(rate: number) {
+  return `${(rate * 100).toFixed(2)}%`;
+}
+
+function roundMoney(value: number) {
+  return Math.round((value + Number.EPSILON) * 100) / 100;
+}
+
+async function requestTaxEstimate(
+  apiUrl: string,
+  token: string,
+  zipCode: string,
+  items: Array<{ id: string; price: number; quantity: number }>
+): Promise<TaxEstimate> {
+  const response = await fetch(`${apiUrl}/tax/estimate`, {
+    method: "POST",
+    headers: {
+      ...authHeaders(token),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ zip: zipCode, items }),
+  });
+  if (!response.ok) {
+    throw new Error(await readError(response));
+  }
+  return (await response.json()) as TaxEstimate;
 }
 
 function readSession() {
@@ -145,6 +202,9 @@ export function AccountScreen() {
   const [loadError, setLoadError] = useState("");
   const [profile, setProfile] = useState<Profile | null>(null);
   const [products, setProducts] = useState<SpottedProduct[]>([]);
+  const [taxEstimate, setTaxEstimate] = useState<TaxEstimate | null>(null);
+  const [taxEstimateLoading, setTaxEstimateLoading] = useState(false);
+  const [taxEstimateError, setTaxEstimateError] = useState("");
   const [session, setSession] = useState<Session | null>(() => readSession());
   const [mode, setMode] = useState<"login" | "signup">("login");
   const [formError, setFormError] = useState("");
@@ -172,6 +232,8 @@ export function AccountScreen() {
     setSession(null);
     setProfile(null);
     setProducts([]);
+    setTaxEstimate(null);
+    setTaxEstimateError("");
   }, []);
 
   const load = useCallback(async (quiet = false) => {
@@ -258,6 +320,19 @@ export function AccountScreen() {
     name.trim().length > 0 &&
     price.trim().length > 0 &&
     location.trim().length > 0;
+  const currentTaxEstimate =
+    taxEstimate?.zip === zip.trim() &&
+    taxEstimate.items.length === products.length &&
+    taxEstimate.items.every((estimateItem) => {
+      const product = products.find((candidate) => candidate.id === estimateItem.id);
+      return (
+        product !== undefined &&
+        estimateItem.subtotal ===
+          roundMoney(product.price * (product.quantity ?? 1))
+      );
+    })
+      ? taxEstimate
+      : null;
   const comparableProducts = products.filter(
     (product): product is SpottedProduct & { barcode: string } =>
       product.barcode !== null
@@ -349,6 +424,42 @@ export function AccountScreen() {
     }
   }
 
+  async function onEstimateTax() {
+    const zipCode = zip.trim();
+    if (
+      !API_URL ||
+      !session ||
+      !/^\d{5}$/.test(zipCode) ||
+      products.length === 0 ||
+      taxEstimateLoading
+    ) {
+      return;
+    }
+
+    setTaxEstimateLoading(true);
+    setTaxEstimateError("");
+    setTaxEstimate(null);
+    try {
+      const result = await requestTaxEstimate(
+        API_URL,
+        session.token,
+        zipCode,
+        products.map((product) => ({
+          id: product.id,
+          price: product.price,
+          quantity: product.quantity ?? 1,
+        }))
+      );
+      setTaxEstimate(result);
+    } catch (error) {
+      setTaxEstimateError(
+        error instanceof Error ? error.message : "Could not calculate the tax estimate."
+      );
+    } finally {
+      setTaxEstimateLoading(false);
+    }
+  }
+
   async function onCompareStores() {
     if (!API_URL || !session || !/^\d{5}$/.test(zip.trim()) || comparing) return;
 
@@ -382,6 +493,8 @@ export function AccountScreen() {
         new Set(comparableProducts.map((product) => product.barcode))
       );
 
+      let taxEstimateFailures = 0;
+      const taxEstimatesByZip = new Map<string, Promise<TaxEstimate>>();
       const results = await Promise.all(
         stores.map(async (store): Promise<StoreComparison | null> => {
           try {
@@ -399,12 +512,20 @@ export function AccountScreen() {
               for (const quote of quotes) prices.set(quote.barcode, quote);
             }
 
-            let total = 0;
             let pricedItems = 0;
             const items = products.map((product) => {
               const quantity = product.quantity ?? 1;
               if (!product.barcode) {
-                return { id: product.id, name: product.name, quantity, price: null };
+                return {
+                  id: product.id,
+                  name: product.name,
+                  quantity,
+                  price: null,
+                  subtotal: null,
+                  tax: null,
+                  total: null,
+                  taxRate: null,
+                };
               }
 
               const quote = prices.get(product.barcode);
@@ -416,21 +537,91 @@ export function AccountScreen() {
                   : quote?.price;
 
               if (price === null || price === undefined) {
-                return { id: product.id, name: product.name, quantity, price: null };
+                return {
+                  id: product.id,
+                  name: product.name,
+                  quantity,
+                  price: null,
+                  subtotal: null,
+                  tax: null,
+                  total: null,
+                  taxRate: null,
+                };
               }
 
-              total += price * quantity;
               pricedItems += 1;
-              return { id: product.id, name: product.name, quantity, price };
+              const subtotal = roundMoney(price * quantity);
+              return {
+                id: product.id,
+                name: product.name,
+                quantity,
+                price,
+                subtotal,
+                tax: null,
+                taxRate: null,
+                total: subtotal,
+              };
+            });
+
+            const subtotal = roundMoney(
+              items.reduce((sum, item) => sum + (item.subtotal ?? 0), 0)
+            );
+            const taxZip =
+              store.address.match(/\b\d{5}(?:-\d{4})?\b/)?.[0].slice(0, 5) ??
+              zip.trim();
+            let storeTaxEstimate: TaxEstimate | null = null;
+            if (pricedItems > 0) {
+              try {
+                const itemsForTax = items.flatMap((item) =>
+                  item.price === null
+                    ? []
+                    : [{ id: item.id, price: item.price, quantity: item.quantity }]
+                );
+                const estimateKey = `${taxZip}:${JSON.stringify(itemsForTax)}`;
+                let estimateRequest = taxEstimatesByZip.get(estimateKey);
+                if (!estimateRequest) {
+                  estimateRequest = requestTaxEstimate(
+                    API_URL,
+                    session.token,
+                    taxZip,
+                    itemsForTax
+                  );
+                  taxEstimatesByZip.set(estimateKey, estimateRequest);
+                }
+                storeTaxEstimate = await estimateRequest;
+              } catch {
+                taxEstimateFailures += 1;
+              }
+            }
+
+            const taxItems = new Map(
+              storeTaxEstimate?.items.map((item) => [item.id, item]) ?? []
+            );
+            const itemsWithTax = items.map((item) => {
+              const estimatedItem = taxItems.get(item.id);
+              return estimatedItem
+                ? {
+                    ...item,
+                    subtotal: estimatedItem.subtotal,
+                    tax: estimatedItem.tax,
+                    taxRate: estimatedItem.rate,
+                    total: estimatedItem.total,
+                  }
+                : item;
             });
 
             return {
               id: store.locationId,
               name: store.name,
               address: store.address,
-              total: Math.round(total * 100) / 100,
+              total: storeTaxEstimate?.total ?? subtotal,
+              subtotal: storeTaxEstimate?.subtotal ?? subtotal,
+              tax: storeTaxEstimate?.tax ?? null,
+              taxRate: storeTaxEstimate?.rate ?? null,
+              taxRateBasis: storeTaxEstimate?.rateBasis ?? null,
+              taxZip,
               pricedItems,
-              items,
+              items: itemsWithTax,
             };
           } catch {
             return null;
@@ -442,8 +633,22 @@ export function AccountScreen() {
         (result): result is StoreComparison => result !== null
       );
       if (availableResults.length === 0) {
-        setCompareError("Kroger prices are temporarily unavailable. Please try again.");
+        setCompareError("Store prices are temporarily unavailable. Please try again.");
         return;
+      }
+
+      if (taxEstimateFailures > 0) {
+        for (const result of availableResults) {
+          result.total = result.subtotal;
+          result.tax = null;
+          result.taxRate = null;
+          result.items = result.items.map((item) => ({
+            ...item,
+            tax: null,
+            taxRate: null,
+            total: item.subtotal,
+          }));
+        }
       }
 
       availableResults.sort((left, right) => {
@@ -454,12 +659,18 @@ export function AccountScreen() {
       });
       setComparisons(availableResults);
       setExpandedStoreId(null);
+      if (taxEstimateFailures > 0) {
+        setCompareError(
+          "Tax estimates are unavailable for some stores; all comparison totals are shown before tax."
+        );
+      }
       if (availableResults.length < stores.length) {
         const unavailableCount = stores.length - availableResults.length;
-        setCompareError(
-          `Prices unavailable at ${unavailableCount} ${
-            unavailableCount === 1 ? "store" : "stores"
-          }. Showing available results.`
+        const priceMessage = `Prices unavailable at ${unavailableCount} ${
+          unavailableCount === 1 ? "store" : "stores"
+        }. Showing available results.`;
+        setCompareError((current) =>
+          current ? `${current} ${priceMessage}` : priceMessage
         );
       }
     } catch (error) {
@@ -892,17 +1103,86 @@ export function AccountScreen() {
 
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>Your list</Text>
-              {products.length > 0 && (
-                <Text style={styles.total}>
-                  Saved-price total:{" "}
-                  {formatMoney(
-                    products.reduce(
-                      (sum, product) =>
-                        sum + product.price * (product.quantity ?? 1),
-                      0
-                    )
-                  )}
+              <Text style={styles.muted}>
+                Estimate grocery tax by ZIP. This assumes food and grocery items; prepared food
+                and non-food products may have different tax treatment. The estimate assumes an
+                in-store purchase at this ZIP.
+              </Text>
+              <TextInput
+                value={zip}
+                onChangeText={(value) => {
+                  setZip(value);
+                  setTaxEstimate(null);
+                  setTaxEstimateError("");
+                }}
+                placeholder="ZIP code"
+                placeholderTextColor={colors.muted}
+                keyboardType="number-pad"
+                maxLength={5}
+                accessibilityLabel="ZIP code for tax estimate and store search"
+                style={styles.input}
+              />
+              <Pressable
+                accessibilityRole="button"
+                disabled={
+                  !/^\d{5}$/.test(zip.trim()) ||
+                  products.length === 0 ||
+                  taxEstimateLoading
+                }
+                onPress={() => void onEstimateTax()}
+                style={[
+                  styles.primaryBtn,
+                  (!/^\d{5}$/.test(zip.trim()) ||
+                    products.length === 0 ||
+                    taxEstimateLoading) &&
+                    styles.primaryBtnDisabled,
+                ]}
+              >
+                <Text style={styles.primaryBtnText}>
+                  {taxEstimateLoading ? "Calculating..." : "Estimate tax"}
                 </Text>
+              </Pressable>
+              {products.length > 0 && (
+                <View style={styles.taxSummary}>
+                  <Text style={styles.muted}>
+                    Subtotal before tax:{" "}
+                    {formatMoney(
+                      roundMoney(
+                        products.reduce(
+                          (sum, product) =>
+                            sum + roundMoney(product.price * (product.quantity ?? 1)),
+                          0
+                        )
+                      )
+                    )}
+                  </Text>
+                  {currentTaxEstimate ? (
+                    <>
+                      <Text style={styles.muted}>
+                        {currentTaxEstimate.rateBasis === "state_estimate"
+                          ? "Estimated state-level grocery tax rate"
+                          : "Applied grocery tax rate"}
+                        : {formatTaxRate(currentTaxEstimate.rate)} · ZIP {currentTaxEstimate.zip} · Tax{" "}
+                        {formatMoney(currentTaxEstimate.tax)}
+                      </Text>
+                      {currentTaxEstimate.rateBasis === "state_estimate" ? (
+                        <Text style={styles.muted}>
+                          Local tax rates may differ from this state-level estimate.
+                        </Text>
+                      ) : null}
+                      <Text style={styles.total}>
+                        Final estimated price: {formatMoney(currentTaxEstimate.total)}
+                      </Text>
+                    </>
+                  ) : (
+                    <Text style={styles.muted}>
+                      Calculate an estimate to see the final price including tax.
+                    </Text>
+                  )}
+                  {taxEstimateError ? (
+                    <Text style={styles.errorText}>{taxEstimateError}</Text>
+                  ) : null}
+                </View>
               )}
               {products.length === 0 ? (
                 <Text style={styles.muted}>Nothing on your list yet.</Text>
@@ -916,58 +1196,74 @@ export function AccountScreen() {
                         {group.products.length === 1 ? "item" : "items"}
                       </Text>
                     </View>
-                    {group.products.map((product) => (
-                      <View key={product.id} style={styles.card}>
-                        <View style={styles.cardTop}>
-                          <Text style={styles.cardName}>{product.name}</Text>
-                          <Text style={styles.cardPrice}>{formatMoney(product.price)}</Text>
-                        </View>
-                        {product.quantity !== null && (
-                          <Text style={styles.muted}>Qty {product.quantity}</Text>
-                        )}
-                        <View style={styles.cardActions}>
-                          <Pressable
-                            accessibilityRole="button"
-                            accessibilityLabel={`View price history for ${product.name}`}
-                            disabled={
-                              !product.barcode ||
-                              !product.external_store_id ||
-                              historyLoading
-                            }
-                            onPress={() => void onHistory(product)}
-                            style={[
-                              styles.actionBtn,
-                              styles.historyBtn,
-                              (!product.barcode ||
-                                !product.external_store_id ||
-                                historyLoading) &&
-                                styles.primaryBtnDisabled,
-                            ]}
-                          >
-                            <Text style={styles.historyBtnText}>History</Text>
-                          </Pressable>
-
-                          <Pressable
-                            accessibilityRole="button"
-                            accessibilityLabel={`Remove ${product.name}`}
-                            disabled={removingId === product.id}
-                            onPress={() => void onRemove(product.id)}
-                            style={[
-                              styles.actionBtn,
-                              styles.removeBtn,
-                              removingId === product.id &&
-                                styles.primaryBtnDisabled,
-                            ]}
-                          >
-                            <Text style={styles.removeBtnText}>
-                              {removingId === product.id
-                                ? "Removing..."
-                                : "Remove"}
+                    {group.products.map((product) => {
+                      const estimatedLine = currentTaxEstimate?.items.find(
+                        (item) => item.id === product.id
+                      );
+                      return (
+                        <View key={product.id} style={styles.card}>
+                          <View style={styles.cardTop}>
+                            <Text style={styles.cardName}>{product.name}</Text>
+                            <Text style={styles.cardPrice}>{formatMoney(product.price)}</Text>
+                          </View>
+                          {product.quantity !== null && (
+                            <Text style={styles.muted}>Qty {product.quantity}</Text>
+                          )}
+                          {estimatedLine ? (
+                            <Text style={styles.muted}>
+                              Estimated line total including tax:{" "}
+                              {formatMoney(estimatedLine.total)}
                             </Text>
-                          </Pressable>
+                          ) : null}
+                          {estimatedLine ? (
+                            <Text style={styles.muted}>
+                              Grocery tax rate: {formatTaxRate(estimatedLine.rate)}
+                            </Text>
+                          ) : null}
+                          <View style={styles.cardActions}>
+                            <Pressable
+                              accessibilityRole="button"
+                              accessibilityLabel={`View price history for ${product.name}`}
+                              disabled={
+                                !product.barcode ||
+                                !product.external_store_id ||
+                                historyLoading
+                              }
+                              onPress={() => void onHistory(product)}
+                              style={[
+                                styles.actionBtn,
+                                styles.historyBtn,
+                                (!product.barcode ||
+                                  !product.external_store_id ||
+                                  historyLoading) &&
+                                  styles.primaryBtnDisabled,
+                              ]}
+                            >
+                              <Text style={styles.historyBtnText}>History</Text>
+                            </Pressable>
+
+                            <Pressable
+                              accessibilityRole="button"
+                              accessibilityLabel={`Remove ${product.name}`}
+                              disabled={removingId === product.id}
+                              onPress={() => void onRemove(product.id)}
+                              style={[
+                                styles.actionBtn,
+                                styles.removeBtn,
+                                removingId === product.id &&
+                                  styles.primaryBtnDisabled,
+                              ]}
+                            >
+                              <Text style={styles.removeBtnText}>
+                                {removingId === product.id
+                                  ? "Removing..."
+                                  : "Remove"}
+                              </Text>
+                            </Pressable>
+                          </View>
                         </View>
-                      </View>
-                    ))}
+                      );
+                    })}
                   </View>
                 ))
               )}
@@ -978,35 +1274,24 @@ export function AccountScreen() {
                 <Text style={styles.sectionTitle}>Compare store prices</Text>
                 <Text style={styles.muted}>
                   Tap a store to see each item’s price. Some items may not have a store price.
+                  The ZIP code above is used to find stores; tax estimates use each store’s ZIP
+                  when available.
                 </Text>
-                <View style={styles.compareRow}>
-                  <TextInput
-                    value={zip}
-                    onChangeText={setZip}
-                    onSubmitEditing={() => void onCompareStores()}
-                    placeholder="ZIP code"
-                    placeholderTextColor={colors.muted}
-                    keyboardType="number-pad"
-                    maxLength={5}
-                    accessibilityLabel="ZIP code for price comparison"
-                    style={[styles.input, styles.compareInput]}
-                  />
-                  <Pressable
-                    accessibilityRole="button"
-                    disabled={!/^\d{5}$/.test(zip.trim()) || comparing}
-                    onPress={() => void onCompareStores()}
-                    style={[
-                      styles.primaryBtn,
-                      styles.compareButton,
-                      (!/^\d{5}$/.test(zip.trim()) || comparing) &&
-                        styles.primaryBtnDisabled,
-                    ]}
-                  >
-                    <Text style={styles.primaryBtnText}>
-                      {comparing ? "Comparing..." : "Compare"}
-                    </Text>
-                  </Pressable>
-                </View>
+                <Pressable
+                  accessibilityRole="button"
+                  disabled={!/^\d{5}$/.test(zip.trim()) || comparing}
+                  onPress={() => void onCompareStores()}
+                  style={[
+                    styles.primaryBtn,
+                    styles.compareButton,
+                    (!/^\d{5}$/.test(zip.trim()) || comparing) &&
+                      styles.primaryBtnDisabled,
+                  ]}
+                >
+                  <Text style={styles.primaryBtnText}>
+                    {comparing ? "Comparing..." : "Compare"}
+                  </Text>
+                </Pressable>
                 {compareError ? <Text style={styles.errorText}>{compareError}</Text> : null}
                 {swapError ? <Text style={styles.errorText}>{swapError}</Text> : null}
                 {swapMessage ? <Text style={styles.successText}>{swapMessage}</Text> : null}
@@ -1027,7 +1312,7 @@ export function AccountScreen() {
                     <View key={store.id} style={styles.compareCard}>
                       <Pressable
                         accessibilityRole="button"
-                        accessibilityLabel={`${expanded ? "Hide" : "Show"} price details for ${store.name}`}
+                        accessibilityLabel={`${expanded ? "Hide" : "Show"} price and applied tax rate details for ${store.name}`}
                         accessibilityState={{ expanded }}
                         onPress={() =>
                           setExpandedStoreId(expanded ? null : store.id)
@@ -1042,8 +1327,37 @@ export function AccountScreen() {
                           </Text>
                         </View>
                         <View style={styles.totalDetails}>
-                          <Text style={styles.muted}>Estimated total</Text>
+                          <Text style={styles.muted}>
+                            {store.tax === null
+                              ? "Priced subtotal before tax"
+                              : store.pricedItems < products.length
+                                ? "Priced items incl. estimated tax"
+                                : "Estimated total incl. tax"}
+                          </Text>
                           <Text style={styles.cardPrice}>{formatMoney(store.total)}</Text>
+                          {store.tax === null ? (
+                            <Text style={styles.muted}>
+                              Tax estimate unavailable · ZIP {store.taxZip}
+                            </Text>
+                          ) : (
+                            <View style={styles.appliedTaxRateBadge}>
+                              <Text style={styles.appliedTaxRateLabel}>
+                                {store.taxRateBasis === "state_estimate"
+                                  ? "STATE-LEVEL ESTIMATE"
+                                  : "APPLIED TAX RATE"}
+                              </Text>
+                              <Text style={styles.appliedTaxRateValue}>
+                                {store.taxRate === null
+                                  ? "Unavailable"
+                                  : formatTaxRate(store.taxRate)}
+                              </Text>
+                            </View>
+                          )}
+                          {store.tax !== null ? (
+                            <Text style={styles.muted}>
+                              Tax {formatMoney(store.tax)} · ZIP {store.taxZip}
+                            </Text>
+                          ) : null}
                           <View style={styles.detailsButton}>
                             <Text style={styles.detailsButtonText}>
                               {expanded ? "Hide details" : "Details"}
@@ -1077,6 +1391,27 @@ export function AccountScreen() {
                           Whole-list swap requires a price for every item.
                         </Text>
                       ) : null}
+                      {expanded ? (
+                        <View style={styles.taxRateDetails}>
+                          <Text style={styles.taxRateDetailsLabel}>
+                            {store.taxRateBasis === "state_estimate"
+                              ? "STATE-LEVEL GROCERY TAX ESTIMATE"
+                              : "APPLIED GROCERY TAX RATE"}
+                          </Text>
+                          <Text style={styles.taxRateDetailsValue}>
+                            {store.taxRate === null
+                              ? "Unavailable"
+                              : formatTaxRate(store.taxRate)}
+                          </Text>
+                          <Text style={styles.muted}>
+                            {store.taxRate === null
+                              ? "This store's tax estimate is unavailable; the displayed subtotal excludes tax."
+                              : store.taxRateBasis === "state_estimate"
+                                ? `State-level estimate for ${store.taxZip}; local taxes may differ.`
+                                : `Applied to grocery items at ZIP ${store.taxZip}.`}
+                          </Text>
+                        </View>
+                      ) : null}
                       {expanded &&
                         store.items.map((item) => (
                           <View key={item.id} style={styles.priceRow}>
@@ -1090,10 +1425,18 @@ export function AccountScreen() {
                               <Text style={item.price === null ? styles.muted : styles.itemPrice}>
                                 {item.price === null
                                   ? "Unavailable"
-                                  : `${formatMoney(item.price)} each · ${formatMoney(
-                                      item.price * item.quantity
-                                    )}`}
+                                  : `${formatMoney(item.price)} each · ${
+                                      item.total === null
+                                        ? `${formatMoney(item.subtotal ?? 0)} before tax`
+                                        : `${formatMoney(item.total)} incl. tax`
+                                    }`}
                               </Text>
+                              {item.taxRate !== null && item.tax !== null ? (
+                                        <Text style={styles.muted}>
+                                          Tax {formatMoney(item.tax)} at{" "}
+                                          {formatTaxRate(item.taxRate)}
+                                        </Text>
+                              ) : null}
                               {item.price !== null ? (() => {
                                 const product = products.find(
                                   (saved) => saved.id === item.id
@@ -1249,8 +1592,7 @@ const styles = StyleSheet.create({
   cardName: { flex: 1, fontWeight: "700", color: colors.text, fontSize: 16 },
   cardPrice: { fontWeight: "800", color: colors.greenDark, fontSize: 16 },
   total: { color: colors.greenDark, fontSize: 16, fontWeight: "800" },
-  compareRow: { flexDirection: "row", alignItems: "center", gap: 8 },
-  compareInput: { flex: 1 },
+  taxSummary: { gap: 4, paddingVertical: 6 },
   compareButton: { marginTop: 0, paddingHorizontal: 16 },
   compareCard: {
     gap: 10,
@@ -1270,6 +1612,45 @@ const styles = StyleSheet.create({
   },
   compareDetails: { flex: 1, gap: 4 },
   totalDetails: { alignItems: "flex-end", gap: 2 },
+  appliedTaxRateBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.green,
+    backgroundColor: colors.card,
+  },
+  appliedTaxRateLabel: {
+    color: colors.text,
+    fontSize: 10,
+    fontWeight: "800",
+  },
+  appliedTaxRateValue: {
+    color: colors.greenDark,
+    fontSize: 16,
+    fontWeight: "900",
+  },
+  taxRateDetails: {
+    gap: 3,
+    padding: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: colors.green,
+    backgroundColor: colors.card,
+  },
+  taxRateDetailsLabel: {
+    color: colors.text,
+    fontSize: 12,
+    fontWeight: "800",
+  },
+  taxRateDetailsValue: {
+    color: colors.greenDark,
+    fontSize: 22,
+    fontWeight: "900",
+  },
   detailsButton: {
     flexDirection: "row",
     alignItems: "center",

@@ -81,13 +81,14 @@ Copy-Item .env.example .env
 
 `api/.env` only holds non-secret settings. The example file sets `PORT=3000`.
 
-Set these three values in the user environment on your computer, not in the file. `DATABASE_URL` is the full Supabase Session pooler string, with the database password already included (see [Getting the Database URL](#getting-the-database-url) below).
+Set these values in the user environment on your computer, not in the file. `DATABASE_URL` is the full Supabase Session pooler string, with the database password already included (see [Getting the Database URL](#getting-the-database-url) below).
 
 ```powershell
 # Windows PowerShell
 [Environment]::SetEnvironmentVariable('DATABASE_URL', 'postgresql://postgres.<project-ref>:<database-password>@<pooler-host>:5432/postgres', 'User')
 [Environment]::SetEnvironmentVariable('KROGER_CLIENT_ID', '<kroger-client-id>', 'User')
 [Environment]::SetEnvironmentVariable('KROGER_CLIENT_SECRET', '<kroger-client-secret>', 'User')
+[Environment]::SetEnvironmentVariable('TAXJAR_API_KEY', '<taxjar-api-key>', 'User')
 ```
 
 ```bash
@@ -95,9 +96,12 @@ Set these three values in the user environment on your computer, not in the file
 export DATABASE_URL='postgresql://postgres.<project-ref>:<database-password>@<pooler-host>:5432/postgres'
 export KROGER_CLIENT_ID='<kroger-client-id>'
 export KROGER_CLIENT_SECRET='<kroger-client-secret>'
+export TAXJAR_API_KEY='<taxjar-api-key>'
 ```
 
 Open a new terminal after setting them. Leave the Kroger values unset only if you are not using Map or in-store search. Those routes then return `Kroger is not configured.`
+
+Grocery tax estimates work without a provider key using the bundled ZIP-to-state lookup and state-level grocery tax table. These fallback rates are estimates and may omit city or county taxes and item-specific exceptions. If `TAXJAR_API_KEY` is configured in the API process environment, TaxJar is used for a more precise ZIP-based estimate with its `Food & Groceries` category. Prepared foods, candy, beverages, supplements, and non-food products may have different tax treatment.
 
 Start the API:
 
