@@ -37,5 +37,7 @@ test("registration and login inputs validate required accounts fields", () => {
   }
 
   assert.equal(typeof parseLoginInput({ email: "user@example.com", password: "short" }), "string");
+  assert.equal(typeof parseLoginInput({ email: "user@example.com", password: "  longer-pass  " }), "string");
+  assert.equal(typeof parseLoginInput({ email: "user..example.com", password: "longer-pass" }), "string");
   assert.equal(normalizeEmail(" Sam@Example.com "), "sam@example.com");
 });

@@ -151,6 +151,7 @@ export function AccountScreen() {
   const [displayName, setDisplayName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [saving, setSaving] = useState(false);
   const [removingId, setRemovingId] = useState<string | null>(null);
   const [activeHistory, setActiveHistory] = useState<SpottedProduct | null>(null);
@@ -242,6 +243,7 @@ export function AccountScreen() {
     !saving &&
     email.trim().length > 0 &&
     password.trim().length >= 8 &&
+    (mode === "login" || password === confirmPassword) &&
     (mode === "login" || displayName.trim().length >= 2);
 
   const [name, setName] = useState("");
@@ -313,6 +315,7 @@ export function AccountScreen() {
       setDisplayName("");
       setEmail("");
       setPassword("");
+      setConfirmPassword("");
       setMode("login");
       setStatus("loading");
     } catch {
@@ -751,6 +754,24 @@ export function AccountScreen() {
               secureTextEntry
             />
 
+            {mode === "signup" && (
+              <>
+                <Text style={styles.label}>Confirm password</Text>
+                <TextInput
+                  value={confirmPassword}
+                  onChangeText={setConfirmPassword}
+                  placeholder="Re-enter your password"
+                  placeholderTextColor={colors.muted}
+                  style={styles.input}
+                  autoCapitalize="none"
+                  secureTextEntry
+                />
+                {confirmPassword.length > 0 && password !== confirmPassword ? (
+                  <Text style={styles.errorText}>Passwords do not match.</Text>
+                ) : null}
+              </>
+            )}
+
             {formError ? <Text style={styles.errorText}>{formError}</Text> : null}
 
             <Pressable
@@ -766,6 +787,7 @@ export function AccountScreen() {
               onPress={() => {
                 setMode(mode === "login" ? "signup" : "login");
                 setFormError("");
+                setConfirmPassword("");
               }}
             >
               <Text style={styles.switchText}>
@@ -806,9 +828,6 @@ export function AccountScreen() {
                 <Text style={styles.name}>{profile.display_name}</Text>
                 <Text style={styles.muted}>{profile.email ?? "Personal account"}</Text>
               </View>
-              <Pressable onPress={() => void onLogout()} style={styles.logoutBtn}>
-                <Text style={styles.logoutBtnText}>Log out</Text>
-              </Pressable>
             </View>
 
             <View style={styles.section}>
@@ -1116,6 +1135,18 @@ export function AccountScreen() {
         )}
         </ScrollView>
 
+      {status === "ready" && profile && (
+        <View style={styles.logoutFooter}>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => void onLogout()}
+            style={styles.logoutBtn}
+          >
+            <Text style={styles.logoutBtnText}>Log out</Text>
+          </Pressable>
+        </View>
+      )}
+
       <PriceHistoryModal
         visible={activeHistory !== null}
         productName={activeHistory?.name ?? ""}
@@ -1133,6 +1164,7 @@ export function AccountScreen() {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.white },
   content: { padding: 16, gap: 14, paddingBottom: 28 },
+  logoutFooter: { paddingHorizontal: 16, paddingVertical: 8, alignItems: "center" },
   authContent: { flexGrow: 1, justifyContent: "center", padding: 16 },
   authCard: { backgroundColor: colors.card, borderRadius: layout.radius, padding: 18, gap: 12 },
   authTitle: { fontSize: 24, fontWeight: "800", color: colors.text },
@@ -1186,13 +1218,10 @@ const styles = StyleSheet.create({
   secondaryBtnText: { color: colors.text, fontWeight: "700" },
   switchText: { textAlign: "center", color: colors.greenDark, fontWeight: "700", marginTop: 8 },
   logoutBtn: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
   },
-  logoutBtnText: { color: colors.text, fontWeight: "700", fontSize: 12 },
+  logoutBtnText: { color: colors.text, fontWeight: "700", fontSize: 11 },
   card: {
     backgroundColor: colors.card,
     borderRadius: layout.radius,
