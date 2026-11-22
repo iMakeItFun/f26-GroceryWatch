@@ -65,8 +65,8 @@ export function SettingsScreen({ health, onClose }: Props) {
   const [activeTab, setActiveTab] = useState<"menu" | "privacy">("menu");
   const [privacy, setPrivacy] = useState<PrivacySettings>({
     shareLocation: true,
-    shareAnalytics: true,
-    personalizedDeals: true,
+    shareAnalytics: false,
+    personalizedDeals: false,
   });
   const [savingPrivacy, setSavingPrivacy] = useState(false);
   const [privacyMessage, setPrivacyMessage] = useState("");

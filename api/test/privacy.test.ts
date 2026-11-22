@@ -8,8 +8,8 @@ import {
 // Verify initial default states for location, analytics, and deals
 test("DEFAULT_PRIVACY_SETTINGS defines sensible user defaults", () => {
   assert.equal(DEFAULT_PRIVACY_SETTINGS.shareLocation, true);
-  assert.equal(DEFAULT_PRIVACY_SETTINGS.shareAnalytics, true);
-  assert.equal(DEFAULT_PRIVACY_SETTINGS.personalizedDeals, true);
+  assert.equal(DEFAULT_PRIVACY_SETTINGS.shareAnalytics, false);
+  assert.equal(DEFAULT_PRIVACY_SETTINGS.personalizedDeals, false);
 });
 
 // Verify input parsing handles errors and extracts valid booleans

@@ -5,11 +5,11 @@ export type PrivacySettings = {
   personalizedDeals: boolean;
 };
 
-// Default toggles to enabled for first-time users
+// Default toggles: location enabled for discovery, telemetry and personalization opt-in
 export const DEFAULT_PRIVACY_SETTINGS: PrivacySettings = {
   shareLocation: true,
-  shareAnalytics: true,
-  personalizedDeals: true,
+  shareAnalytics: false,
+  personalizedDeals: false,
 };
 
 // Validate partial updates sent from the settings screen
