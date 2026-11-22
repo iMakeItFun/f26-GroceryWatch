@@ -4,6 +4,7 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   View,
@@ -64,6 +65,12 @@ type StorePrice = {
   barcode: string;
   price: number | null;
   promoPrice: number | null;
+};
+
+type PrivacySettings = {
+  shareLocation: boolean;
+  shareAnalytics: boolean;
+  personalizedDeals: boolean;
 };
 
 function formatMoney(value: number) {
@@ -166,12 +173,25 @@ export function AccountScreen() {
   const [swapBusy, setSwapBusy] = useState<string | null>(null);
   const [swapMessage, setSwapMessage] = useState("");
   const [swapError, setSwapError] = useState("");
+  const [privacy, setPrivacy] = useState<PrivacySettings>({
+    shareLocation: true,
+    shareAnalytics: true,
+    personalizedDeals: true,
+  });
+  const [savingPrivacy, setSavingPrivacy] = useState(false);
+  const [privacyMessage, setPrivacyMessage] = useState("");
 
   const clearSession = useCallback(() => {
     writeSession(null);
     setSession(null);
     setProfile(null);
     setProducts([]);
+    setPrivacy({
+      shareLocation: true,
+      shareAnalytics: true,
+      personalizedDeals: true,
+    });
+    setPrivacyMessage("");
   }, []);
 
   const load = useCallback(async (quiet = false) => {
@@ -228,6 +248,19 @@ export function AccountScreen() {
 
       setProfile(profileData);
       setProducts((await productsResponse.json()) as SpottedProduct[]);
+
+      try {
+        const privResponse = await fetch(`${API_URL}/profile/privacy`, {
+          headers: authHeaders(session.token),
+        });
+        if (privResponse.ok) {
+          const privData = (await privResponse.json()) as PrivacySettings;
+          setPrivacy(privData);
+        }
+      } catch {
+        // Fall back gracefully to default privacy settings.
+      }
+
       setStatus("ready");
     } catch {
       setStatus("error");
@@ -705,6 +738,33 @@ export function AccountScreen() {
     }
   }
 
+  async function onTogglePrivacy(key: keyof PrivacySettings, value: boolean) {
+    if (!API_URL || !session) return;
+    const updated = { ...privacy, [key]: value };
+    setPrivacy(updated);
+    setSavingPrivacy(true);
+    setPrivacyMessage("");
+    try {
+      const res = await fetch(`${API_URL}/profile/privacy`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          ...authHeaders(session.token),
+        },
+        body: JSON.stringify({ [key]: value }),
+      });
+      if (res.ok) {
+        setPrivacyMessage("Privacy settings saved.");
+      } else {
+        setPrivacyMessage("Failed to save setting.");
+      }
+    } catch {
+      setPrivacyMessage("Failed to save setting.");
+    } finally {
+      setSavingPrivacy(false);
+    }
+  }
+
   if (!session) {
     return (
       <View style={styles.root}>
@@ -827,6 +887,63 @@ export function AccountScreen() {
               <View style={styles.profileText}>
                 <Text style={styles.name}>{profile.display_name}</Text>
                 <Text style={styles.muted}>{profile.email ?? "Personal account"}</Text>
+              </View>
+            </View>
+
+            <View style={styles.privacyCard}>
+              <View style={styles.privacyHeader}>
+                <Text style={styles.sectionTitle}>Privacy & Data Settings</Text>
+                {savingPrivacy && (
+                  <Text style={styles.privacySavingText}>Saving...</Text>
+                )}
+                {!savingPrivacy && privacyMessage !== "" && (
+                  <Text style={styles.privacySavedText}>{privacyMessage}</Text>
+                )}
+              </View>
+
+              <View style={styles.privacyRow}>
+                <View style={styles.privacyInfo}>
+                  <Text style={styles.privacyLabel}>Share Location</Text>
+                  <Text style={styles.privacyDesc}>
+                    Use your location to discover nearby grocery stores and compare prices.
+                  </Text>
+                </View>
+                <Switch
+                  value={privacy.shareLocation}
+                  onValueChange={(val) => void onTogglePrivacy("shareLocation", val)}
+                  accessibilityLabel="Share location toggle"
+                  trackColor={{ false: colors.border, true: colors.green }}
+                />
+              </View>
+
+              <View style={[styles.privacyRow, styles.privacyRowBorder]}>
+                <View style={styles.privacyInfo}>
+                  <Text style={styles.privacyLabel}>Anonymous Analytics</Text>
+                  <Text style={styles.privacyDesc}>
+                    Help improve GroceryWatch by sending anonymous app usage data.
+                  </Text>
+                </View>
+                <Switch
+                  value={privacy.shareAnalytics}
+                  onValueChange={(val) => void onTogglePrivacy("shareAnalytics", val)}
+                  accessibilityLabel="Anonymous analytics toggle"
+                  trackColor={{ false: colors.border, true: colors.green }}
+                />
+              </View>
+
+              <View style={[styles.privacyRow, styles.privacyRowBorder]}>
+                <View style={styles.privacyInfo}>
+                  <Text style={styles.privacyLabel}>Personalized Deals</Text>
+                  <Text style={styles.privacyDesc}>
+                    Allow product and deal recommendations tailored to your shopping list.
+                  </Text>
+                </View>
+                <Switch
+                  value={privacy.personalizedDeals}
+                  onValueChange={(val) => void onTogglePrivacy("personalizedDeals", val)}
+                  accessibilityLabel="Personalized deals toggle"
+                  trackColor={{ false: colors.border, true: colors.green }}
+                />
               </View>
             </View>
 
@@ -1342,5 +1459,51 @@ const styles = StyleSheet.create({
     color: colors.danger,
     fontWeight: "700",
     fontSize: 13,
+  },
+  privacyCard: {
+    backgroundColor: colors.card,
+    borderRadius: layout.radius,
+    padding: 14,
+    gap: 12,
+  },
+  privacyHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  privacySavingText: {
+    fontSize: 12,
+    color: colors.muted,
+    fontWeight: "600",
+  },
+  privacySavedText: {
+    fontSize: 12,
+    color: colors.greenDark,
+    fontWeight: "600",
+  },
+  privacyRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    paddingVertical: 4,
+  },
+  privacyRowBorder: {
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    paddingTop: 10,
+  },
+  privacyInfo: {
+    flex: 1,
+    gap: 2,
+  },
+  privacyLabel: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: colors.text,
+  },
+  privacyDesc: {
+    fontSize: 12,
+    color: colors.muted,
   },
 });
