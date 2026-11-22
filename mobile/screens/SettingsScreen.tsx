@@ -24,6 +24,7 @@ type Session = {
   expires_at: string;
 };
 
+// Reads stored login credentials across web and native storage
 function readSession(): Session | null {
   const storage = globalThis as typeof globalThis & {
     [SESSION_KEY]?: string;
@@ -71,6 +72,7 @@ export function SettingsScreen({ health, onClose }: Props) {
   const [privacyMessage, setPrivacyMessage] = useState("");
   const [session, setSession] = useState<Session | null>(() => readSession());
 
+  // Fetch user's saved privacy settings when opening the screen
   useEffect(() => {
     const sess = readSession();
     setSession(sess);
@@ -89,6 +91,7 @@ export function SettingsScreen({ health, onClose }: Props) {
       .catch(() => {});
   }, [activeTab]);
 
+  // Updates local toggle immediately, then persists to the backend
   async function onTogglePrivacy(key: keyof PrivacySettings, value: boolean) {
     const updated = { ...privacy, [key]: value };
     setPrivacy(updated);
@@ -122,6 +125,7 @@ export function SettingsScreen({ health, onClose }: Props) {
     }
   }
 
+  // Dedicated Privacy & Security subview
   if (activeTab === "privacy") {
     return (
       <View style={styles.root}>
@@ -241,6 +245,7 @@ export function SettingsScreen({ health, onClose }: Props) {
             accessibilityLabel={row.label}
             style={styles.row}
             onPress={() => {
+              // Open privacy subscreen when Privacy & Security row is tapped
               if (row.id === "privacy") {
                 setActiveTab("privacy");
                 return;

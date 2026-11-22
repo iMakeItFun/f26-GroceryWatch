@@ -5,12 +5,14 @@ import {
   DEFAULT_PRIVACY_SETTINGS,
 } from "../src/privacySettings";
 
+// Verify initial default states for location, analytics, and deals
 test("DEFAULT_PRIVACY_SETTINGS defines sensible user defaults", () => {
   assert.equal(DEFAULT_PRIVACY_SETTINGS.shareLocation, true);
   assert.equal(DEFAULT_PRIVACY_SETTINGS.shareAnalytics, true);
   assert.equal(DEFAULT_PRIVACY_SETTINGS.personalizedDeals, true);
 });
 
+// Verify input parsing handles errors and extracts valid booleans
 test("parsePrivacySettingsInput validates and extracts boolean privacy preferences", () => {
   assert.equal(typeof parsePrivacySettingsInput(null), "string");
   assert.equal(typeof parsePrivacySettingsInput("not-an-object"), "string");

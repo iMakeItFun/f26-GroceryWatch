@@ -673,6 +673,7 @@ app.get("/profile", async (req, reply) => {
   }
 });
 
+// Retrieve privacy preferences for the logged-in user (falls back to defaults)
 app.get("/profile/privacy", async (req, reply) => {
   const session = await getSessionUserId(req as any, reply);
   if (!session) return;
@@ -705,6 +706,7 @@ app.get("/profile/privacy", async (req, reply) => {
   }
 });
 
+// Update one or more privacy toggles for the user
 app.patch("/profile/privacy", async (req, reply) => {
   const session = await getSessionUserId(req as any, reply);
   if (!session) return;
@@ -715,6 +717,7 @@ app.patch("/profile/privacy", async (req, reply) => {
   }
 
   try {
+    // Read existing settings so unspecified toggles keep their current values
     const current = await pool.query<{
       share_location: boolean;
       share_analytics: boolean;
@@ -740,6 +743,7 @@ app.patch("/profile/privacy", async (req, reply) => {
       existing?.personalized_deals ??
       DEFAULT_PRIVACY_SETTINGS.personalizedDeals;
 
+    // Upsert into database and update timestamp
     await pool.query(
       `INSERT INTO public.user_privacy_settings (user_id, share_location, share_analytics, personalized_deals, updated_at)
        VALUES ($1, $2, $3, $4, now())
