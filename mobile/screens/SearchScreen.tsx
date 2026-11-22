@@ -1,7 +1,6 @@
 import { useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -42,6 +41,7 @@ type KrogerPrice = {
 
 type Props = {
   onOpenSettings: () => void;
+  onOpenShoppingList: () => void;
 };
 
 
@@ -121,7 +121,7 @@ async function getFallbackStoreId(
   }
 }
 
-export function SearchScreen({ onOpenSettings }: Props) {
+export function SearchScreen({ onOpenSettings, onOpenShoppingList }: Props) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<CatalogProduct[]>([]);
   const [status, setStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
@@ -425,7 +425,7 @@ export function SearchScreen({ onOpenSettings }: Props) {
 
     if (!token) {
       setAddError(
-        "You must sign in to add products to your list."
+        "You must sign in to add products to your shopping list."
       );
       return;
     }
@@ -486,6 +486,7 @@ export function SearchScreen({ onOpenSettings }: Props) {
         ...current,
         [key]: true,
       }));
+      setAddError("");
     } catch {
       setAddError("Could not connect to the server.");
     } finally {
@@ -562,9 +563,7 @@ export function SearchScreen({ onOpenSettings }: Props) {
     <View style={styles.root}>
       <ScreenHeader
         title="Search Products"
-        onListPress={() =>
-          Alert.alert("Shopping list", "Coming soon — shopping list is a deluxe feature.")
-        }
+        onListPress={onOpenShoppingList}
         onSettingsPress={onOpenSettings}
       />
 

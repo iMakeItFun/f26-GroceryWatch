@@ -18,13 +18,21 @@ export default function App() {
   const frameWidth = Math.min(width, layout.phoneWidth);
 
   const openSettings = () => setShowSettings(true);
+  const openShoppingList = () => {
+    setShowSettings(false);
+    setTab("account");
+  };
   const closeSettings = () => {
     setShowSettings(false);
     setTab("home");
   };
 
   let screen = (
-    <HomeScreen health={health} onOpenSettings={openSettings} />
+    <HomeScreen
+      health={health}
+      onOpenSettings={openSettings}
+      onOpenShoppingList={openShoppingList}
+    />
   );
 
   if (showSettings) {
@@ -32,7 +40,12 @@ export default function App() {
   } else if (tab === "map") {
     screen = <MapScreen />;
   } else if (tab === "search") {
-    screen = <SearchScreen onOpenSettings={openSettings} />;
+    screen = (
+      <SearchScreen
+        onOpenSettings={openSettings}
+        onOpenShoppingList={openShoppingList}
+      />
+    );
   } else if (tab === "account") {
     screen = <AccountScreen />;
   }

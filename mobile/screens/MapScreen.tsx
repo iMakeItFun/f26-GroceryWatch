@@ -9,18 +9,12 @@ import {
   View,
 } from "react-native";
 import { ScreenHeader } from "../components/Chrome";
+import StoreMap from "../components/StoreMap";
 import { requestDeviceCoordinates, showLocationPermissionDenied } from "../location";
+import type { KrogerStore } from "../store";
 import { colors, layout } from "../theme";
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
-
-type KrogerStore = {
-  locationId: string;
-  name: string;
-  address: string;
-  latitude: number | null;
-  longitude: number | null;
-};
 
 type StoreReview = {
   id: string;
@@ -65,27 +59,6 @@ function getSessionToken(): string | null {
   }
 }
 
-function pinStyle(store: KrogerStore, stores: KrogerStore[]) {
-  const points = stores.filter(
-    (item) => item.latitude !== null && item.longitude !== null
-  );
-  if (store.latitude === null || store.longitude === null || points.length === 0) {
-    return null;
-  }
-  const lats = points.map((item) => item.latitude as number);
-  const lngs = points.map((item) => item.longitude as number);
-  const minLat = Math.min(...lats);
-  const maxLat = Math.max(...lats);
-  const minLng = Math.min(...lngs);
-  const maxLng = Math.max(...lngs);
-  const latSpan = maxLat - minLat || 1;
-  const lngSpan = maxLng - minLng || 1;
-  return {
-    top: `${12 + (1 - (store.latitude - minLat) / latSpan) * 68}%`,
-    left: `${8 + ((store.longitude - minLng) / lngSpan) * 76}%`,
-  } as const;
-}
-
 async function readError(res: Response, fallback = "Store search failed.") {
   try {
     const data = (await res.json()) as { error?: unknown };
@@ -98,6 +71,7 @@ async function readError(res: Response, fallback = "Store search failed.") {
 export function MapScreen() {
   const [zip, setZip] = useState("");
   const [stores, setStores] = useState<KrogerStore[]>([]);
+  const [selectedStoreId, setSelectedStoreId] = useState<string | null>(null);
   const [status, setStatus] = useState<"idle" | "loading" | "error">("idle");
   const [error, setError] = useState("");
   const [checked, setChecked] = useState(false);
@@ -111,8 +85,8 @@ export function MapScreen() {
   const [storeReviews, setStoreReviews] = useState<StoreReviewSummary | null>(null);
   const [reviewsStatus, setReviewsStatus] = useState<"idle" | "loading" | "error">("idle");
   const [reviewsError, setReviewsError] = useState("");
+  const selectedStore = stores.find((store) => store.locationId === selectedStoreId) ?? null;
   const canSearch = /^\d{5}$/.test(zip.trim()) && status !== "loading";
-  const mapped = stores.filter((store) => pinStyle(store, stores));
 
   function openReview(store: KrogerStore) {
     setReviewStoreId(store.locationId);
@@ -217,6 +191,7 @@ export function MapScreen() {
   async function onSearch() {
     if (!canSearch) return;
     setSearchSource("zip");
+    setSelectedStoreId(null);
     if (!API_URL) {
       setStatus("error");
       setError("API URL not set");
@@ -248,6 +223,7 @@ export function MapScreen() {
     setSearchSource("location");
     setChecked(false);
     setStores([]);
+    setSelectedStoreId(null);
     setError("");
     if (!API_URL) {
       setStatus("error");
@@ -339,38 +315,52 @@ export function MapScreen() {
         ) : null}
 
         <View style={styles.map}>
-          {mapped.length === 0 ? (
-            <Text style={styles.mapEmpty}>
-              {checked && stores.length === 0
+          <StoreMap
+            stores={stores}
+            selectedStoreId={selectedStoreId}
+            onSelect={setSelectedStoreId}
+            emptyMessage={
+              checked && stores.length === 0
                 ? searchSource === "location"
                   ? "No Kroger stores found near your location."
                   : "No Kroger stores found for that zip."
                 : checked
                   ? "These stores did not include a map location."
-                  : "Nearby Kroger stores"}
-            </Text>
-          ) : (
-            stores.map((store, index) => {
-              const position = pinStyle(store, stores);
-              if (!position) return null;
-              return (
-                <View key={store.locationId} style={[styles.pin, position]}>
-                  <Text style={styles.pinIndex}>{index + 1}</Text>
-                  <Text style={styles.pinName} numberOfLines={2}>
-                    {store.name}
-                  </Text>
-                </View>
-              );
-            })
-          )}
+                  : "Nearby Kroger stores"
+            }
+          />
         </View>
 
+        {selectedStore ? (
+          <View style={styles.selectedStore} accessibilityLiveRegion="polite">
+            <Text style={styles.selectedStoreLabel}>Selected store</Text>
+            <Text style={styles.storeName}>{selectedStore.name}</Text>
+            {selectedStore.address ? (
+              <Text style={styles.storeMeta}>{selectedStore.address}</Text>
+            ) : null}
+          </View>
+        ) : null}
+
         {stores.map((store, index) => (
-          <View key={store.locationId} style={styles.storeCard}>
+          <View
+            key={store.locationId}
+            style={[
+              styles.storeCard,
+              selectedStoreId === store.locationId && styles.storeCardSelected,
+            ]}
+          >
             <Text style={styles.storeIndex}>{index + 1}</Text>
             <View style={styles.storeBody}>
-              <Text style={styles.storeName}>{store.name}</Text>
-              {store.address ? <Text style={styles.storeMeta}>{store.address}</Text> : null}
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Select ${store.name}`}
+                accessibilityState={{ selected: selectedStoreId === store.locationId }}
+                onPress={() => setSelectedStoreId(store.locationId)}
+                style={styles.storeSelect}
+              >
+                <Text style={styles.storeName}>{store.name}</Text>
+                {store.address ? <Text style={styles.storeMeta}>{store.address}</Text> : null}
+              </Pressable>
               <Pressable
                 accessibilityRole="button"
                 accessibilityState={{ expanded: reviewsStoreId === store.locationId }}
@@ -530,36 +520,11 @@ const styles = StyleSheet.create({
   hint: { fontSize: 13, color: colors.muted },
   errorText: { color: colors.danger, fontSize: 14 },
   map: {
-    height: 280,
+    height: 360,
     borderRadius: layout.radius,
     backgroundColor: colors.card,
-    position: "relative",
     overflow: "hidden",
   },
-  mapEmpty: {
-    textAlign: "center",
-    color: colors.muted,
-    marginTop: 120,
-    paddingHorizontal: 20,
-  },
-  pin: {
-    position: "absolute",
-    maxWidth: 120,
-    gap: 2,
-  },
-  pinIndex: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    overflow: "hidden",
-    textAlign: "center",
-    lineHeight: 22,
-    backgroundColor: colors.green,
-    color: colors.white,
-    fontWeight: "700",
-    fontSize: 12,
-  },
-  pinName: { fontSize: 11, fontWeight: "700", color: colors.text },
   storeCard: {
     flexDirection: "row",
     alignItems: "center",
@@ -569,6 +534,7 @@ const styles = StyleSheet.create({
     borderRadius: layout.radius,
     padding: 14,
   },
+  storeCardSelected: { borderColor: colors.greenDark, backgroundColor: colors.greenSoft },
   storeIndex: {
     width: 24,
     height: 24,
@@ -581,8 +547,18 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
   storeBody: { flex: 1, gap: 6 },
+  storeSelect: { alignSelf: "stretch", gap: 4 },
   storeName: { fontSize: 16, fontWeight: "700", color: colors.text },
   storeMeta: { color: colors.muted, fontSize: 13 },
+  selectedStore: {
+    gap: 4,
+    borderWidth: 1,
+    borderColor: colors.greenDark,
+    borderRadius: layout.radius,
+    padding: 14,
+    backgroundColor: colors.greenSoft,
+  },
+  selectedStoreLabel: { color: colors.greenDark, fontSize: 12, fontWeight: "700" },
   reviewToggle: { alignSelf: "flex-start", paddingVertical: 6 },
   reviewToggleText: { color: colors.greenDark, fontSize: 14, fontWeight: "700" },
   reviewList: { gap: 8, paddingTop: 4 },

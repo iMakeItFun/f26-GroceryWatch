@@ -32,7 +32,7 @@ export function validateEmail(value: unknown) {
   }
 
   const email = normalizeEmail(value);
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+  if (!/^(?=.{1,254}$)(?!.*\.\.)[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/.test(email)) {
     return null;
   }
 
@@ -41,8 +41,8 @@ export function validateEmail(value: unknown) {
 
 export function validatePassword(value: unknown) {
   if (typeof value !== "string") return null;
-  const password = value.trim();
-  if (password.length < 8) {
+  const password = value;
+  if (password.length < 8 || password.trim() !== password || password.trim().length === 0) {
     return null;
   }
   return password;
@@ -74,7 +74,7 @@ export function parseBearerToken(header: string | undefined | null) {
 }
 
 export function parseRegistrationInput(body: unknown): AccountRegistrationInput | string {
-  if (!body || typeof body !== "object") {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
     return "Request body is required.";
   }
 
@@ -102,7 +102,7 @@ export function parseRegistrationInput(body: unknown): AccountRegistrationInput 
 }
 
 export function parseLoginInput(body: unknown): AccountLoginInput | string {
-  if (!body || typeof body !== "object") {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
     return "Request body is required.";
   }
 
