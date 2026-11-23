@@ -173,32 +173,42 @@ export function SettingsScreen({ health, onClose }: Props) {
               />
             </View>
 
-            <View style={[styles.privacyRow, styles.privacyRowBorder]}>
+            <View style={[styles.privacyRow, styles.privacyRowBorder, styles.privacyRowDisabled]}>
               <View style={styles.privacyInfo}>
-                <Text style={styles.privacyLabel}>Anonymous Analytics</Text>
+                <View style={styles.privacyLabelRow}>
+                  <Text style={styles.privacyLabel}>Anonymous Analytics</Text>
+                  <View style={styles.wipBadge}>
+                    <Text style={styles.wipBadgeText}>WIP</Text>
+                  </View>
+                </View>
                 <Text style={styles.privacyDesc}>
-                  Help improve GroceryWatch by sending anonymous app usage data.
+                  Help improve GroceryWatch by sending anonymous app usage data. (Work in progress)
                 </Text>
               </View>
               <Switch
-                value={privacy.shareAnalytics}
-                onValueChange={(val) => void onTogglePrivacy("shareAnalytics", val)}
-                accessibilityLabel="Anonymous analytics toggle"
+                value={false}
+                disabled={true}
+                accessibilityLabel="Anonymous analytics toggle (WIP)"
                 trackColor={{ false: colors.border, true: colors.green }}
               />
             </View>
 
-            <View style={[styles.privacyRow, styles.privacyRowBorder]}>
+            <View style={[styles.privacyRow, styles.privacyRowBorder, styles.privacyRowDisabled]}>
               <View style={styles.privacyInfo}>
-                <Text style={styles.privacyLabel}>Personalized Deals</Text>
+                <View style={styles.privacyLabelRow}>
+                  <Text style={styles.privacyLabel}>Personalized Deals</Text>
+                  <View style={styles.wipBadge}>
+                    <Text style={styles.wipBadgeText}>WIP</Text>
+                  </View>
+                </View>
                 <Text style={styles.privacyDesc}>
-                  Allow product and deal recommendations tailored to your shopping list.
+                  Allow product and deal recommendations tailored to your shopping list. (Work in progress)
                 </Text>
               </View>
               <Switch
-                value={privacy.personalizedDeals}
-                onValueChange={(val) => void onTogglePrivacy("personalizedDeals", val)}
-                accessibilityLabel="Personalized deals toggle"
+                value={false}
+                disabled={true}
+                accessibilityLabel="Personalized deals toggle (WIP)"
                 trackColor={{ false: colors.border, true: colors.green }}
               />
             </View>
@@ -233,10 +243,13 @@ export function SettingsScreen({ health, onClose }: Props) {
       <Text style={styles.title}>Settings</Text>
 
       <ScrollView contentContainerStyle={styles.content}>
-        <View style={styles.searchBar}>
-          <Text style={styles.searchIcon}>🔍</Text>
-          <Text style={styles.searchPlaceholder}>Search</Text>
-        </View>
+        {/* Search bar kept in code but hidden until settings search is implemented */}
+        {false && (
+          <View style={styles.searchBar}>
+            <Text style={styles.searchIcon}>🔍</Text>
+            <Text style={styles.searchPlaceholder}>Search</Text>
+          </View>
+        )}
 
         {SETTINGS_ROWS.map((row) => (
           <Pressable
@@ -399,14 +412,33 @@ const styles = StyleSheet.create({
     borderTopColor: colors.border,
     paddingTop: 12,
   },
+  privacyRowDisabled: {
+    opacity: 0.5,
+  },
   privacyInfo: {
     flex: 1,
     gap: 2,
+  },
+  privacyLabelRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
   },
   privacyLabel: {
     fontSize: 14,
     fontWeight: "700",
     color: colors.text,
+  },
+  wipBadge: {
+    backgroundColor: colors.border,
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  wipBadgeText: {
+    fontSize: 10,
+    fontWeight: "800",
+    color: colors.muted,
   },
   privacyDesc: {
     fontSize: 12,
