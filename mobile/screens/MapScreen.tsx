@@ -11,7 +11,7 @@ import {
 import { ScreenHeader } from "../components/Chrome";
 import StoreMap from "../components/StoreMap";
 import { requestDeviceCoordinates, showLocationPermissionDenied } from "../location";
-import type { KrogerStore } from "../store";
+import type { KrogerStore, SharedStoreSelection } from "../store";
 import { colors, layout } from "../theme";
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
@@ -68,14 +68,21 @@ async function readError(res: Response, fallback = "Store search failed.") {
   return fallback;
 }
 
-export function MapScreen() {
-  const [zip, setZip] = useState("");
-  const [stores, setStores] = useState<KrogerStore[]>([]);
-  const [selectedStoreId, setSelectedStoreId] = useState<string | null>(null);
+export function MapScreen({ storeSelection }: { storeSelection: SharedStoreSelection }) {
+  const {
+    zip,
+    setZip,
+    stores,
+    setStores,
+    selectedStoreId,
+    setSelectedStoreId,
+    searchSource,
+    setSearchSource,
+    storesChecked: checked,
+    setStoresChecked: setChecked,
+  } = storeSelection;
   const [status, setStatus] = useState<"idle" | "loading" | "error">("idle");
   const [error, setError] = useState("");
-  const [checked, setChecked] = useState(false);
-  const [searchSource, setSearchSource] = useState<"zip" | "location">("zip");
   const [reviewStoreId, setReviewStoreId] = useState<string | null>(null);
   const [reviewRating, setReviewRating] = useState(5);
   const [reviewComment, setReviewComment] = useState("");
@@ -87,6 +94,16 @@ export function MapScreen() {
   const [reviewsError, setReviewsError] = useState("");
   const selectedStore = stores.find((store) => store.locationId === selectedStoreId) ?? null;
   const canSearch = /^\d{5}$/.test(zip.trim()) && status !== "loading";
+
+  function onZipChange(value: string) {
+    setZip(value);
+    setSearchSource("zip");
+    if (value.trim() !== zip.trim()) {
+      setStores([]);
+      setSelectedStoreId(null);
+      setChecked(false);
+    }
+  }
 
   function openReview(store: KrogerStore) {
     setReviewStoreId(store.locationId);
@@ -221,6 +238,7 @@ export function MapScreen() {
   async function onUseLocation() {
     if (status === "loading") return;
     setSearchSource("location");
+    setZip("");
     setChecked(false);
     setStores([]);
     setSelectedStoreId(null);
@@ -284,7 +302,7 @@ export function MapScreen() {
         <View style={styles.searchBar}>
           <TextInput
             value={zip}
-            onChangeText={setZip}
+            onChangeText={onZipChange}
             onSubmitEditing={() => void onSearch()}
             placeholder="Zip code"
             placeholderTextColor={colors.muted}

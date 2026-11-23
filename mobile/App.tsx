@@ -8,14 +8,32 @@ import { HomeScreen } from "./screens/HomeScreen";
 import { MapScreen } from "./screens/MapScreen";
 import { SearchScreen } from "./screens/SearchScreen";
 import { SettingsScreen } from "./screens/SettingsScreen";
+import type { KrogerStore } from "./store";
 import { colors, layout } from "./theme";
 
 export default function App() {
   const health = useHealth();
   const [tab, setTab] = useState<TabId>("home");
   const [showSettings, setShowSettings] = useState(false);
+  const [zip, setZip] = useState("");
+  const [stores, setStores] = useState<KrogerStore[]>([]);
+  const [selectedStoreId, setSelectedStoreId] = useState<string | null>(null);
+  const [searchSource, setSearchSource] = useState<"zip" | "location">("zip");
+  const [storesChecked, setStoresChecked] = useState(false);
   const { width } = useWindowDimensions();
   const frameWidth = Math.min(width, layout.phoneWidth);
+  const storeSelection = {
+    zip,
+    setZip,
+    stores,
+    setStores,
+    selectedStoreId,
+    setSelectedStoreId,
+    searchSource,
+    setSearchSource,
+    storesChecked,
+    setStoresChecked,
+  };
 
   const openSettings = () => setShowSettings(true);
   const openShoppingList = () => {
@@ -38,12 +56,13 @@ export default function App() {
   if (showSettings) {
     screen = <SettingsScreen health={health} onClose={closeSettings} />;
   } else if (tab === "map") {
-    screen = <MapScreen />;
+    screen = <MapScreen storeSelection={storeSelection} />;
   } else if (tab === "search") {
     screen = (
       <SearchScreen
         onOpenSettings={openSettings}
         onOpenShoppingList={openShoppingList}
+        storeSelection={storeSelection}
       />
     );
   } else if (tab === "account") {

@@ -10,6 +10,7 @@ import {
 } from "react-native";
 import { ScreenHeader } from "../components/Chrome";
 import { requestDeviceCoordinates, showLocationPermissionDenied } from "../location";
+import type { KrogerStore, SharedStoreSelection } from "../store";
 import { colors } from "../theme";
 import {
   PriceHistoryModal,
@@ -27,12 +28,6 @@ type CatalogProduct = {
   packageSize: string | null;
 };
 
-type KrogerStore = {
-  locationId: string;
-  name: string;
-  address: string;
-};
-
 type KrogerPrice = {
   barcode: string;
   price: number | null;
@@ -44,12 +39,16 @@ type TaxEstimate = {
   items: Array<{
     id: string;
     rate: number;
+    subtotal: number;
+    tax: number;
+    total: number;
   }>;
 };
 
 type Props = {
   onOpenSettings: () => void;
   onOpenShoppingList: () => void;
+  storeSelection: SharedStoreSelection;
 };
 
 
@@ -129,25 +128,37 @@ async function getFallbackStoreId(
   }
 }
 
-export function SearchScreen({ onOpenSettings, onOpenShoppingList }: Props) {
+export function SearchScreen({
+  onOpenSettings,
+  onOpenShoppingList,
+  storeSelection,
+}: Props) {
+  const {
+    zip,
+    setZip,
+    stores,
+    setStores,
+    selectedStoreId,
+    setSelectedStoreId,
+    searchSource: storeSearchSource,
+    setSearchSource: setStoreSearchSource,
+    storesChecked,
+    setStoresChecked,
+  } = storeSelection;
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<CatalogProduct[]>([]);
   const [status, setStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [error, setError] = useState("");
-  const [zip, setZip] = useState("");
-  const [stores, setStores] = useState<KrogerStore[]>([]);
   const [storeStatus, setStoreStatus] = useState<"idle" | "loading" | "error">("idle");
   const [storeError, setStoreError] = useState("");
-  const [storeSearchSource, setStoreSearchSource] = useState<"zip" | "location">("zip");
-  const [selectedStoreId, setSelectedStoreId] = useState<string | null>(null);
   const [prices, setPrices] = useState<Record<string, KrogerPrice>>({});
   const [priceStatus, setPriceStatus] = useState<"idle" | "loading" | "error">("idle");
   const [priceError, setPriceError] = useState("");
   const [taxRates, setTaxRates] = useState<Record<string, number>>({});
+  const [taxTotals, setTaxTotals] = useState<Record<string, number>>({});
   const [taxRateBasis, setTaxRateBasis] = useState<TaxEstimate["rateBasis"] | null>(null);
   const [taxRateStatus, setTaxRateStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [taxRateError, setTaxRateError] = useState("");
-  const [storesChecked, setStoresChecked] = useState(false);
   const [storeMatches, setStoreMatches] = useState<CatalogProduct[]>([]);
   const [addedKeys, setAddedKeys] = useState<Record<string, true>>({});
   const [addingKey, setAddingKey] = useState<string | null>(null);
@@ -160,6 +171,16 @@ export function SearchScreen({ onOpenSettings, onOpenShoppingList }: Props) {
   const [historyError, setHistoryError] = useState("");
 
   const canSearch = query.trim().length > 0 && status !== "loading";
+
+  function onZipChange(value: string) {
+    setZip(value);
+    setStoreSearchSource("zip");
+    if (value.trim() !== zip.trim()) {
+      setStores([]);
+      setSelectedStoreId(null);
+      setStoresChecked(false);
+    }
+  }
 
   async function onSearch() {
     setActiveHistory(null);
@@ -177,10 +198,9 @@ export function SearchScreen({ onOpenSettings, onOpenShoppingList }: Props) {
 
     setStatus("loading");
     setError("");
-    setStores([]);
-    setSelectedStoreId(null);
     setPrices({});
     setTaxRates({});
+    setTaxTotals({});
     setTaxRateBasis(null);
     setTaxRateStatus("idle");
     setTaxRateError("");
@@ -188,7 +208,6 @@ export function SearchScreen({ onOpenSettings, onOpenShoppingList }: Props) {
     setStoreError("");
     setPriceStatus("idle");
     setPriceError("");
-    setStoresChecked(false);
     setStoreMatches([]);
     setAddedKeys({});
     setAddingKey(null);
@@ -199,10 +218,19 @@ export function SearchScreen({ onOpenSettings, onOpenShoppingList }: Props) {
       if (!res.ok) {
         setResults([]);
         setStatus("ready");
+        const selectedStore = stores.find(
+          (store) => store.locationId === selectedStoreId
+        );
+        if (selectedStore) void onSelectStore(selectedStore, []);
         return;
       }
-      setResults((await res.json()) as CatalogProduct[]);
+      const nextResults = (await res.json()) as CatalogProduct[];
+      setResults(nextResults);
       setStatus("ready");
+      const selectedStore = stores.find(
+        (store) => store.locationId === selectedStoreId
+      );
+      if (selectedStore) void onSelectStore(selectedStore, nextResults);
     } catch {
       setStatus("error");
       setError("API unreachable");
@@ -272,9 +300,11 @@ export function SearchScreen({ onOpenSettings, onOpenShoppingList }: Props) {
     setStoreStatus("loading");
     setStoreError("");
     setStoresChecked(false);
+    setStores([]);
     setSelectedStoreId(null);
     setPrices({});
     setTaxRates({});
+    setTaxTotals({});
     setTaxRateBasis(null);
     setTaxRateStatus("idle");
     setTaxRateError("");
@@ -302,12 +332,14 @@ export function SearchScreen({ onOpenSettings, onOpenShoppingList }: Props) {
   async function onFindNearbyStores() {
     if (storeStatus === "loading") return;
     setStoreSearchSource("location");
+    setZip("");
     setStoreStatus("loading");
     setStoreError("");
     setStoresChecked(false);
     setSelectedStoreId(null);
     setPrices({});
     setTaxRates({});
+    setTaxTotals({});
     setTaxRateBasis(null);
     setTaxRateStatus("idle");
     setTaxRateError("");
@@ -354,18 +386,22 @@ export function SearchScreen({ onOpenSettings, onOpenShoppingList }: Props) {
     }
   }
 
-  async function onSelectStore(store: KrogerStore) {
+  async function onSelectStore(
+    store: KrogerStore,
+    productList: CatalogProduct[] = results
+  ) {
     setActiveHistory(null);
     setHistoryData(null);
     setHistoryError("");
 
     if (!API_URL || priceStatus === "loading") return;
-    const barcodes = results
+    const barcodes = productList
       .map((product) => product.barcode)
       .filter((barcode): barcode is string => Boolean(barcode));
     setSelectedStoreId(store.locationId);
     setPrices({});
     setTaxRates({});
+    setTaxTotals({});
     setTaxRateBasis(null);
     setTaxRateStatus("loading");
     setTaxRateError("");
@@ -394,6 +430,7 @@ export function SearchScreen({ onOpenSettings, onOpenShoppingList }: Props) {
           setSelectedStoreId(fallbackId);
           setPrices({});
           setTaxRates({});
+          setTaxTotals({});
           setTaxRateBasis(null);
           setStoreMatches([]);
           setPriceError("");
@@ -515,10 +552,12 @@ export function SearchScreen({ onOpenSettings, onOpenShoppingList }: Props) {
 
       const estimate = (await response.json()) as TaxEstimate;
       const ratesByProduct: Record<string, number> = {};
+      const totalsByProduct: Record<string, number> = {};
       for (const [index, item] of estimate.items.entries()) {
         const product = rateItems[index];
         if (product && Number.isFinite(item.rate)) {
           ratesByProduct[product.productKey] = item.rate;
+          totalsByProduct[product.productKey] = item.total;
         }
       }
 
@@ -529,6 +568,7 @@ export function SearchScreen({ onOpenSettings, onOpenShoppingList }: Props) {
       }
 
       setTaxRates(ratesByProduct);
+      setTaxTotals(totalsByProduct);
       setTaxRateBasis(estimate.rateBasis);
       setTaxRateStatus("ready");
     } catch {
@@ -759,7 +799,7 @@ export function SearchScreen({ onOpenSettings, onOpenShoppingList }: Props) {
             <View style={styles.searchBar}>
               <TextInput
                 value={zip}
-                onChangeText={setZip}
+                onChangeText={onZipChange}
                 onSubmitEditing={() => void onFindStores()}
                 placeholder="Zip code"
                 placeholderTextColor={colors.muted}
@@ -865,6 +905,11 @@ export function SearchScreen({ onOpenSettings, onOpenShoppingList }: Props) {
                     <Text style={styles.taxRate}>
                       Estimated tax rate: {formatTaxRate(taxRates[key]!)}
                     </Text>
+                    {taxTotals[key] !== undefined ? (
+                      <Text style={styles.taxRateHint}>
+                        Final estimated price: {formatMoney(taxTotals[key]!)}
+                      </Text>
+                    ) : null}
                     {taxRateBasis === "state_estimate" ? (
                       <Text style={styles.taxRateHint}>
                         State-level estimate; local taxes may vary

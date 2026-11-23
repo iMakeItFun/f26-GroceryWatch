@@ -38,6 +38,7 @@ type SpottedProduct = {
   quantity: number | null;
   barcode: string | null;
   external_store_id: string | null;
+  store_zip: string | null;
 };
 
 type StoreComparison = {
@@ -105,6 +106,10 @@ function formatTaxRate(rate: number) {
 
 function roundMoney(value: number) {
   return Math.round((value + Number.EPSILON) * 100) / 100;
+}
+
+function extractStoreZip(location: string) {
+  return location.match(/\b(\d{5})(?:-\d{4})?\b/)?.[1] ?? null;
 }
 
 async function requestTaxEstimate(
@@ -321,7 +326,7 @@ export function AccountScreen() {
     price.trim().length > 0 &&
     location.trim().length > 0;
   const currentTaxEstimate =
-    taxEstimate?.zip === zip.trim() &&
+    taxEstimate &&
     taxEstimate.items.length === products.length &&
     taxEstimate.items.every((estimateItem) => {
       const product = products.find((candidate) => candidate.id === estimateItem.id);
@@ -424,41 +429,77 @@ export function AccountScreen() {
     }
   }
 
-  async function onEstimateTax() {
-    const zipCode = zip.trim();
-    if (
-      !API_URL ||
-      !session ||
-      !/^\d{5}$/.test(zipCode) ||
-      products.length === 0 ||
-      taxEstimateLoading
-    ) {
+  useEffect(() => {
+    if (!API_URL || !session || products.length === 0 || taxEstimateLoading) return;
+
+    let cancelled = false;
+    setTaxEstimateLoading(true);
+    setTaxEstimateError("");
+
+    const groups = new Map<
+      string,
+      Array<{ id: string; price: number; quantity: number }>
+    >();
+    for (const product of products) {
+      const zipCode = product.store_zip ?? extractStoreZip(product.location);
+      if (!zipCode) continue;
+      const group = groups.get(zipCode) ?? [];
+      group.push({
+        id: product.id,
+        price: product.price,
+        quantity: product.quantity ?? 1,
+      });
+      groups.set(zipCode, group);
+    }
+
+    if (groups.size === 0) {
+      setTaxEstimate(null);
+      setTaxEstimateError("Add items from a store with a ZIP code to calculate tax.");
+      setTaxEstimateLoading(false);
       return;
     }
 
-    setTaxEstimateLoading(true);
-    setTaxEstimateError("");
-    setTaxEstimate(null);
-    try {
-      const result = await requestTaxEstimate(
-        API_URL,
-        session.token,
-        zipCode,
-        products.map((product) => ({
-          id: product.id,
-          price: product.price,
-          quantity: product.quantity ?? 1,
-        }))
-      );
-      setTaxEstimate(result);
-    } catch (error) {
-      setTaxEstimateError(
-        error instanceof Error ? error.message : "Could not calculate the tax estimate."
-      );
-    } finally {
-      setTaxEstimateLoading(false);
-    }
-  }
+    void Promise.all(
+      Array.from(groups.entries()).map(([zipCode, items]) =>
+        requestTaxEstimate(API_URL, session.token, zipCode, items)
+      )
+    )
+      .then((estimates) => {
+        if (cancelled) return;
+        const items = estimates.flatMap((estimate) => estimate.items);
+        const subtotal = roundMoney(
+          estimates.reduce((sum, estimate) => sum + estimate.subtotal, 0)
+        );
+        const tax = roundMoney(
+          estimates.reduce((sum, estimate) => sum + estimate.tax, 0)
+        );
+        setTaxEstimate({
+          rateBasis: estimates[0]?.rateBasis ?? "state_estimate",
+          zip: estimates[0]?.zip ?? "",
+          jurisdiction: estimates[0]?.jurisdiction ?? { city: null, state: "" },
+          rate: estimates[0]?.rate ?? 0,
+          subtotal,
+          tax,
+          total: roundMoney(subtotal + tax),
+          items,
+        });
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setTaxEstimate(null);
+          setTaxEstimateError(
+            error instanceof Error ? error.message : "Could not calculate the tax estimate."
+          );
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setTaxEstimateLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [API_URL, session, products]);
 
   async function onCompareStores() {
     if (!API_URL || !session || !/^\d{5}$/.test(zip.trim()) || comparing) return;
@@ -1104,44 +1145,9 @@ export function AccountScreen() {
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>Your list</Text>
               <Text style={styles.muted}>
-                Estimate grocery tax by ZIP. This assumes food and grocery items; prepared food
-                and non-food products may have different tax treatment. The estimate assumes an
-                in-store purchase at this ZIP.
+                Grocery tax is calculated automatically from each item's store ZIP. Rates are
+                not adjustable and prepare food and non-food items may have different treatment.
               </Text>
-              <TextInput
-                value={zip}
-                onChangeText={(value) => {
-                  setZip(value);
-                  setTaxEstimate(null);
-                  setTaxEstimateError("");
-                }}
-                placeholder="ZIP code"
-                placeholderTextColor={colors.muted}
-                keyboardType="number-pad"
-                maxLength={5}
-                accessibilityLabel="ZIP code for tax estimate and store search"
-                style={styles.input}
-              />
-              <Pressable
-                accessibilityRole="button"
-                disabled={
-                  !/^\d{5}$/.test(zip.trim()) ||
-                  products.length === 0 ||
-                  taxEstimateLoading
-                }
-                onPress={() => void onEstimateTax()}
-                style={[
-                  styles.primaryBtn,
-                  (!/^\d{5}$/.test(zip.trim()) ||
-                    products.length === 0 ||
-                    taxEstimateLoading) &&
-                    styles.primaryBtnDisabled,
-                ]}
-              >
-                <Text style={styles.primaryBtnText}>
-                  {taxEstimateLoading ? "Calculating..." : "Estimate tax"}
-                </Text>
-              </Pressable>
               {products.length > 0 && (
                 <View style={styles.taxSummary}>
                   <Text style={styles.muted}>

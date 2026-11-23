@@ -190,8 +190,14 @@ function toProduct(row: ProductRow) {
     quantity: row.quantity,
     barcode: row.barcode,
     external_store_id: row.external_store_id,
+    store_zip: extractStoreZip(row.location),
     created_at: row.created_at,
   };
+}
+
+function extractStoreZip(location: string): string | null {
+  const match = location.match(/\b(\d{5})(?:-\d{4})?\b/);
+  return match?.[1] ?? null;
 }
 
 async function getSessionUserId(req: { headers: Record<string, string | string[] | undefined> }, reply: any) {
