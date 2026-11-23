@@ -173,42 +173,32 @@ export function SettingsScreen({ health, onClose }: Props) {
               />
             </View>
 
-            <View style={[styles.privacyRow, styles.privacyRowBorder, styles.privacyRowDisabled]}>
+            <View style={[styles.privacyRow, styles.privacyRowBorder]}>
               <View style={styles.privacyInfo}>
-                <View style={styles.privacyLabelRow}>
-                  <Text style={styles.privacyLabel}>Anonymous Analytics</Text>
-                  <View style={styles.wipBadge}>
-                    <Text style={styles.wipBadgeText}>WIP</Text>
-                  </View>
-                </View>
+                <Text style={styles.privacyLabel}>Anonymous Analytics</Text>
                 <Text style={styles.privacyDesc}>
-                  Help improve GroceryWatch by sending anonymous app usage data. (Work in progress)
+                  Help improve GroceryWatch by sending anonymous app usage data.
                 </Text>
               </View>
               <Switch
-                value={false}
-                disabled={true}
-                accessibilityLabel="Anonymous analytics toggle (WIP)"
+                value={privacy.shareAnalytics}
+                onValueChange={(val) => void onTogglePrivacy("shareAnalytics", val)}
+                accessibilityLabel="Anonymous analytics toggle"
                 trackColor={{ false: colors.border, true: colors.green }}
               />
             </View>
 
-            <View style={[styles.privacyRow, styles.privacyRowBorder, styles.privacyRowDisabled]}>
+            <View style={[styles.privacyRow, styles.privacyRowBorder]}>
               <View style={styles.privacyInfo}>
-                <View style={styles.privacyLabelRow}>
-                  <Text style={styles.privacyLabel}>Personalized Deals</Text>
-                  <View style={styles.wipBadge}>
-                    <Text style={styles.wipBadgeText}>WIP</Text>
-                  </View>
-                </View>
+                <Text style={styles.privacyLabel}>Personalized Deals</Text>
                 <Text style={styles.privacyDesc}>
-                  Allow product and deal recommendations tailored to your shopping list. (Work in progress)
+                  Allow product and deal recommendations tailored to your shopping list.
                 </Text>
               </View>
               <Switch
-                value={false}
-                disabled={true}
-                accessibilityLabel="Personalized deals toggle (WIP)"
+                value={privacy.personalizedDeals}
+                onValueChange={(val) => void onTogglePrivacy("personalizedDeals", val)}
+                accessibilityLabel="Personalized deals toggle"
                 trackColor={{ false: colors.border, true: colors.green }}
               />
             </View>
@@ -251,33 +241,36 @@ export function SettingsScreen({ health, onClose }: Props) {
           </View>
         )}
 
-        {SETTINGS_ROWS.map((row) => (
-          <Pressable
-            key={row.id}
-            accessibilityRole="button"
-            accessibilityLabel={row.label}
-            style={styles.row}
-            onPress={() => {
-              // Open privacy subscreen when Privacy & Security row is tapped
-              if (row.id === "privacy") {
-                setActiveTab("privacy");
-                return;
-              }
-              if (row.id === "about") {
-                Alert.alert(
-                  "About GroceryWatch",
-                  `CS 411W · ODU\nTeam Iron GroceryWatch\n\n${health.label}`
-                );
-                return;
-              }
-              Alert.alert(row.label, `${row.hint}\n\nComing soon.`);
-            }}
-          >
-            <Text style={styles.rowIcon}>{row.icon}</Text>
-            <Text style={styles.rowLabel}>{row.label}</Text>
-            <Text style={styles.chevron}>›</Text>
-          </Pressable>
-        ))}
+        {SETTINGS_ROWS.map((row) => {
+          const isWip = row.id !== "privacy";
+          return (
+            <Pressable
+              key={row.id}
+              accessibilityRole="button"
+              accessibilityLabel={isWip ? `${row.label} (WIP)` : row.label}
+              disabled={isWip}
+              style={[styles.row, isWip && styles.privacyRowDisabled]}
+              onPress={() => {
+                // Open privacy subscreen when Privacy & Security row is tapped
+                if (row.id === "privacy") {
+                  setActiveTab("privacy");
+                  return;
+                }
+              }}
+            >
+              <Text style={styles.rowIcon}>{row.icon}</Text>
+              <View style={styles.privacyLabelRow}>
+                <Text style={styles.rowLabel}>{row.label}</Text>
+                {isWip && (
+                  <View style={styles.wipBadge}>
+                    <Text style={styles.wipBadgeText}>WIP</Text>
+                  </View>
+                )}
+              </View>
+              <Text style={styles.chevron}>›</Text>
+            </Pressable>
+          );
+        })}
 
         <View style={styles.aboutBox}>
           <Text style={styles.aboutTitle}>System status</Text>
@@ -355,7 +348,7 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   rowIcon: { fontSize: 18, width: 28, textAlign: "center" },
-  rowLabel: { flex: 1, fontSize: 16, color: colors.text, fontWeight: "500" },
+  rowLabel: { fontSize: 16, color: colors.text, fontWeight: "500" },
   chevron: { fontSize: 22, color: colors.muted },
   aboutBox: {
     marginTop: 16,
@@ -420,6 +413,7 @@ const styles = StyleSheet.create({
     gap: 2,
   },
   privacyLabelRow: {
+    flex: 1,
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
