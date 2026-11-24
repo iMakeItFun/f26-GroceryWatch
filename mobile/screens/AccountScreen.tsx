@@ -971,7 +971,17 @@ export function AccountScreen() {
                         </View>
                         <View style={styles.totalDetails}>
                           <Text style={styles.muted}>Estimated total</Text>
-                          <Text style={styles.cardPrice}>{formatMoney(store.total)}</Text>
+                          <Text
+                            style={
+                              store.pricedItems === 0
+                                ? [styles.cardPrice, { color: colors.textMuted }]
+                                : styles.cardPrice
+                            }
+                          >
+                            {store.pricedItems === 0
+                              ? "--"
+                              : formatMoney(store.total)}
+                          </Text>
                           <View style={styles.detailsButton}>
                             <Text style={styles.detailsButtonText}>
                               {expanded ? "Hide details" : "Details"}
