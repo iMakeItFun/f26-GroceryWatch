@@ -68,7 +68,12 @@ async function readError(res: Response, fallback = "Store search failed.") {
   return fallback;
 }
 
-export function MapScreen() {
+type Props = {
+  onOpenSettings?: () => void;
+  onOpenShoppingList?: () => void;
+};
+
+export function MapScreen({ onOpenSettings, onOpenShoppingList }: Props = {}) {
   const [zip, setZip] = useState("");
   const [stores, setStores] = useState<KrogerStore[]>([]);
   const [selectedStoreId, setSelectedStoreId] = useState<string | null>(null);
@@ -266,7 +271,11 @@ export function MapScreen() {
 
   return (
     <View style={styles.root}>
-      <ScreenHeader title="Map" showActions={false} />
+      <ScreenHeader
+        title="Map"
+        onListPress={onOpenShoppingList}
+        onSettingsPress={onOpenSettings}
+      />
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <Pressable
           accessibilityRole="button"

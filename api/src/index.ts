@@ -30,6 +30,11 @@ import {
   parseStoreSwapInput,
 } from "./productSwap";
 import {
+  DEFAULT_PRIVACY_SETTINGS,
+  parsePrivacySettingsInput,
+  type PrivacySettings,
+} from "./privacySettings";
+import {
   DEMO_STORE_ID,
   demoEnabled,
   isDemoStore,
@@ -665,6 +670,99 @@ app.get("/profile", async (req, reply) => {
   } catch (err) {
     app.log.error(err);
     return reply.code(500).send({ error: "Could not load profile." });
+  }
+});
+
+// Retrieve privacy preferences for the logged-in user (falls back to defaults)
+app.get("/profile/privacy", async (req, reply) => {
+  const session = await getSessionUserId(req as any, reply);
+  if (!session) return;
+
+  try {
+    const result = await pool.query<{
+      share_location: boolean;
+      share_analytics: boolean;
+      personalized_deals: boolean;
+    }>(
+      `SELECT share_location, share_analytics, personalized_deals
+       FROM public.user_privacy_settings
+       WHERE user_id = $1`,
+      [session.userId]
+    );
+
+    const row = result.rows[0];
+    if (!row) {
+      return DEFAULT_PRIVACY_SETTINGS;
+    }
+
+    return {
+      shareLocation: row.share_location,
+      shareAnalytics: row.share_analytics,
+      personalizedDeals: row.personalized_deals,
+    };
+  } catch (err) {
+    app.log.error(err);
+    return DEFAULT_PRIVACY_SETTINGS;
+  }
+});
+
+// Update one or more privacy toggles for the user
+app.patch("/profile/privacy", async (req, reply) => {
+  const session = await getSessionUserId(req as any, reply);
+  if (!session) return;
+
+  const parsed = parsePrivacySettingsInput(req.body);
+  if (typeof parsed === "string") {
+    return reply.code(400).send({ error: parsed });
+  }
+
+  try {
+    // Read existing settings so unspecified toggles keep their current values
+    const current = await pool.query<{
+      share_location: boolean;
+      share_analytics: boolean;
+      personalized_deals: boolean;
+    }>(
+      `SELECT share_location, share_analytics, personalized_deals
+       FROM public.user_privacy_settings
+       WHERE user_id = $1`,
+      [session.userId]
+    );
+
+    const existing = current.rows[0];
+    const shareLocation =
+      parsed.shareLocation ??
+      existing?.share_location ??
+      DEFAULT_PRIVACY_SETTINGS.shareLocation;
+    const shareAnalytics =
+      parsed.shareAnalytics ??
+      existing?.share_analytics ??
+      DEFAULT_PRIVACY_SETTINGS.shareAnalytics;
+    const personalizedDeals =
+      parsed.personalizedDeals ??
+      existing?.personalized_deals ??
+      DEFAULT_PRIVACY_SETTINGS.personalizedDeals;
+
+    // Upsert into database and update timestamp
+    await pool.query(
+      `INSERT INTO public.user_privacy_settings (user_id, share_location, share_analytics, personalized_deals, updated_at)
+       VALUES ($1, $2, $3, $4, now())
+       ON CONFLICT (user_id) DO UPDATE SET
+         share_location = EXCLUDED.share_location,
+         share_analytics = EXCLUDED.share_analytics,
+         personalized_deals = EXCLUDED.personalized_deals,
+         updated_at = now()`,
+      [session.userId, shareLocation, shareAnalytics, personalizedDeals]
+    );
+
+    return {
+      shareLocation,
+      shareAnalytics,
+      personalizedDeals,
+    };
+  } catch (err) {
+    app.log.error(err);
+    return reply.code(500).send({ error: "Could not save privacy settings." });
   }
 });
 
