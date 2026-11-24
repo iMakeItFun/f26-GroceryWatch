@@ -9,6 +9,5 @@ create table if not exists store_reviews (
   comment text not null check (char_length(comment) between 1 and 1000),
   created_at timestamptz not null default now()
 );
-
 create index if not exists store_reviews_store_created_at_idx
   on store_reviews (store_provider, external_store_id, created_at desc);

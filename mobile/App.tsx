@@ -38,7 +38,12 @@ export default function App() {
   if (showSettings) {
     screen = <SettingsScreen health={health} onClose={closeSettings} />;
   } else if (tab === "map") {
-    screen = <MapScreen />;
+    screen = (
+      <MapScreen
+        onOpenSettings={openSettings}
+        onOpenShoppingList={openShoppingList}
+      />
+    );
   } else if (tab === "search") {
     screen = (
       <SearchScreen
